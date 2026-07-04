@@ -4,6 +4,8 @@
 #include "shared/random.h"
 #include "storage/backup.h"
 #include "storage/storage.h"
+#include "base32.h"
+#include "qrcodegen.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,10 +91,74 @@ void cmd_get_key(int argc, char **argv) {
     buzzer_play_command_ack();
 }
 
+// Łódź URL-encoded: Ł=%C5%81, ó=%C3%B3, ź=%C5%BA, space=%20
+#define ISSUER_ENC "Hackerspejs%20%C5%81%C3%B3d%C5%BA"
+#define QR_BORDER       2  // quiet zone — required for scanners to work
+#define SECRET_B32_LEN  BASE32_ENCODED_LEN(KEY_SECRET_LEN)  // 33 bytes for 20-byte secret
+
 void cmd_get_key_secret(int argc, char **argv) {
-    // TODO
-    printf("get-key-secret: [stub] would show secret + QR for key id=%s\r\n",
-           argv[1]);
+    uint16_t id = (uint16_t)strtoul(argv[1], NULL, 10);
+
+    if (id > KEY_ID_MAX) {
+        printf("error: id must be 0-%d\r\n", KEY_ID_MAX);
+        buzzer_play_command_ack();
+        return;
+    }
+
+    key_record_t key;
+    if (!storage_key_get(id, &key)) {
+        printf("error: key %u not found\r\n", id);
+        buzzer_play_command_ack();
+        return;
+    }
+
+    if (!key.is_checksum_valid) {
+        printf("error: key %u is corrupt\r\n", id);
+        buzzer_play_command_ack();
+        return;
+    }
+
+    // Base32-encode secret
+    char secret_b32[SECRET_B32_LEN];
+    base32_encode(key.secret, KEY_SECRET_LEN, secret_b32);
+
+    // Build otpauth URI
+    char uri[200];
+    snprintf(uri, sizeof(uri),
+        "otpauth://totp/%s:key%%20%u?secret=%s&issuer=%s&digits=6&period=30",
+        ISSUER_ENC, id, secret_b32, ISSUER_ENC);
+
+    printf("secret:  %s\r\n", secret_b32);
+    printf("uri:     %s\r\n\r\n", uri);
+
+    // Generate QR code - static buffers to avoid stack overflow
+    static uint8_t qr[qrcodegen_BUFFER_LEN_MAX];
+    static uint8_t tmp[qrcodegen_BUFFER_LEN_MAX];
+
+    bool ok = qrcodegen_encodeText(uri, tmp, qr,
+                                    qrcodegen_Ecc_MEDIUM,
+                                    qrcodegen_VERSION_MIN,
+                                    qrcodegen_VERSION_MAX,
+                                    qrcodegen_Mask_AUTO,
+                                    true);
+    if (!ok) {
+        printf("error: QR generation failed\r\n");
+        buzzer_play_command_ack();
+        return;
+    }
+
+    // Print ASCII QR with quiet zone border
+    int size = qrcodegen_getSize(qr);
+    for (int y = -QR_BORDER; y < size + QR_BORDER; y++) {
+        for (int x = -QR_BORDER; x < size + QR_BORDER; x++) {
+            bool dark = (x >= 0 && y >= 0 && x < size && y < size)
+                     && qrcodegen_getModule(qr, x, y);
+            printf(dark ? "##" : "  ");
+        }
+        printf("\r\n");
+    }
+    printf("\r\n");
+
     buzzer_play_command_ack();
 }
 

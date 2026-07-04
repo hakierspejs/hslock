@@ -33,6 +33,16 @@ add_library(base64 STATIC
 target_include_directories(base64 PUBLIC libs/base64)
 
 # ---------------------------------------------------------------------------
+# base32 + qrcodegen
+# ---------------------------------------------------------------------------
+
+add_library(base32 STATIC libs/base32/base32.c)
+target_include_directories(base32 PUBLIC libs/base32)
+
+add_library(qrcodegen STATIC libs/qrcodegen/c/qrcodegen.c)
+target_include_directories(qrcodegen PUBLIC libs/qrcodegen/c)
+
+# ---------------------------------------------------------------------------
 # Project sources
 # ---------------------------------------------------------------------------
 
@@ -100,6 +110,8 @@ target_link_libraries(hslock
     hardware_flash
     littlefs
     base64
+    qrcodegen
+    base32
 )
 
 pico_enable_stdio_usb(hslock 1)

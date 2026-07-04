@@ -1,3 +1,6 @@
 [submodule "libs/littlefs"]
 	path = libs/littlefs
 	url = https://github.com/littlefs-project/littlefs
+[submodule "libs/qrcodegen"]
+	path = libs/qrcodegen
+	url = https://github.com/nayuki/QR-Code-generator
