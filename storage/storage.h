@@ -6,7 +6,7 @@
 #include <stddef.h>
 
 // ---------------------------------------------------------------------------
-// Key record — fields stored per TOTP key
+// Key record - fields stored per TOTP key
 // ---------------------------------------------------------------------------
 
 #define KEY_MAX_COUNT 256

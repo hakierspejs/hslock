@@ -36,21 +36,21 @@ static void main1(void) {
 static void boot_network(void) {
     wifi_config_t cfg;
     if (!storage_wifi_get(&cfg)) {
-        printf("[main] no wifi config — skipping NTP\r\n");
+        printf("[main] no wifi config - skipping NTP\r\n");
         printf("[main] use set-wifi to configure\r\n");
         buzzer_beep_long();
         return;
     }
 
     if (!wifi_connect(cfg.ssid, cfg.password)) {
-        printf("[main] wifi connect failed — skipping NTP\r\n");
+        printf("[main] wifi connect failed - skipping NTP\r\n");
         buzzer_beep_long();
         return;
     }
 
     ntp_init();
 
-    // Block until first NTP sync succeeds — beep + retry on failure
+    // Block until first NTP sync succeeds - beep + retry on failure
     printf("[main] waiting for NTP sync...\r\n");
     while (!ntp_sync()) {
         printf("[main] NTP sync failed, retrying in %ds...\r\n",
@@ -78,7 +78,7 @@ int main(void) {
 
     boot_network();
  
-    // Startup beep — signals boot completed
+    // Startup beep - signals boot completed
     buzzer_beep_short();
     buzzer_beep_short();
  

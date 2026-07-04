@@ -19,7 +19,7 @@ bool commands_is_admin(void) {
 void commands_on_disconnect(void) {
     if (admin_mode) {
         admin_mode = false;
-        printf("[console] USB disconnected — admin session ended\r\n");
+        printf("[console] USB disconnected - admin session ended\r\n");
     }
 }
 
@@ -69,7 +69,7 @@ static const command_t COMMANDS[] = {
 #define NUM_COMMANDS (sizeof(COMMANDS) / sizeof(COMMANDS[0]))
 
 // ---------------------------------------------------------------------------
-// Help — defined after table
+// Help - defined after table
 // ---------------------------------------------------------------------------
 
 static void cmd_help(int argc, char **argv) {
@@ -88,7 +88,7 @@ static void cmd_help(int argc, char **argv) {
     buzzer_play_command_ack();
 }
 
-// Handler lookup — must match COMMANDS table order
+// Handler lookup - must match COMMANDS table order
 static void (*const HANDLERS[])(int, char**) = {
     cmd_help,
     cmd_help,
@@ -125,7 +125,7 @@ void commands_dispatch(int argc, char **argv) {
         const command_t *cmd = &COMMANDS[i];
 
         if (cmd->requires_admin && !admin_mode) {
-            printf("error: '%s' requires admin mode — use login <otp>\r\n",
+            printf("error: '%s' requires admin mode - use login <otp>\r\n",
                    cmd->name);
             buzzer_play_command_ack();
             return;
@@ -142,7 +142,7 @@ void commands_dispatch(int argc, char **argv) {
         return;
     }
 
-    printf("error: unknown command '%s' — type 'help' for available commands\r\n",
+    printf("error: unknown command '%s' - type 'help' for available commands\r\n",
            argv[0]);
     buzzer_play_command_ack();
 }

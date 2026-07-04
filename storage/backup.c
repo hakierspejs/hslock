@@ -126,7 +126,7 @@ bool backup_import(const uint8_t *buf, size_t size) {
         return false;
     }
 
-    // Checksum valid — delete existing keys
+    // Checksum valid - delete existing keys
     static key_record_t existing[BACKUP_MAX_KEYS];
     int existing_count = storage_key_list(existing, BACKUP_MAX_KEYS);
     for (int i = 0; i < existing_count; i++) {

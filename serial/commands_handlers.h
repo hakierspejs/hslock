@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 
-// Shared admin state — defined in commands.c
+// Shared admin state - defined in commands.c
 extern bool admin_mode;
 
 // System

@@ -10,7 +10,7 @@ pico_sdk_init()
 
 
 # ---------------------------------------------------------------------------
-# LittleFS — compiled directly from submodule source
+# LittleFS - compiled directly from submodule source
 # ---------------------------------------------------------------------------
  
 add_library(littlefs STATIC
@@ -92,7 +92,8 @@ target_include_directories(hslock PRIVATE
 target_link_libraries(hslock
     pico_stdlib
     pico_multicore
-    pico_flash                              # flash_safe_execute
+    pico_flash       # flash_safe_execute
+    pico_rand                       
     pico_cyw43_arch_lwip_threadsafe_background
     hardware_rtc
     hardware_pwm

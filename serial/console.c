@@ -40,7 +40,7 @@ static void process_line(void) {
 }
 
 void console_init(void) {
-    // Nothing to do yet — USB stdio enabled via CMakeLists
+    // Nothing to do yet - USB stdio enabled via CMakeLists
 }
 
 void console_task(void) {
@@ -57,7 +57,7 @@ void console_task(void) {
         was_connected = true;
     }
 
-    // USB just disconnected — auto-logout
+    // USB just disconnected - auto-logout
     if (!connected && was_connected) {
         commands_on_disconnect();
         input_len     = 0;

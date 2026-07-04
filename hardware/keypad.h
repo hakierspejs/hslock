@@ -21,7 +21,7 @@
 void keypad_init(void);
 
 // Non-blocking. Returns key char on new press, 0 if none.
-// Call in a tight loop — handles debounce internally.
+// Call in a tight loop - handles debounce internally.
 char keypad_get_key(void);
 
 #endif

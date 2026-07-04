@@ -158,7 +158,7 @@ bool ntp_sync(void) {
     cyw43_arch_lwip_end();
 
     if (err == ERR_OK) {
-        // Already cached — fire callback manually
+        // Already cached - fire callback manually
         dns_found_cb(NTP_SERVER, &server_addr, NULL);
     } else if (err != ERR_INPROGRESS) {
         printf("[ntp] DNS error: %d\r\n", err);

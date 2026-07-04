@@ -9,14 +9,14 @@
 #define NTP_TIMEOUT_S           15          // per-sync timeout
 #define NTP_ROLLBACK_EPSILON_S  60          // max allowed backward correction
 
-// Call once after WiFi connected — initialises RTC
+// Call once after WiFi connected - initialises RTC
 void ntp_init(void);
 
 // Perform NTP sync. Blocks until done or timeout.
 // Returns true on success.
 bool ntp_sync(void);
 
-// Call in core 0 loop — handles periodic resync
+// Call in core 0 loop - handles periodic resync
 void ntp_task(void);
 
 // Unix timestamp of last successful sync, 0 if never

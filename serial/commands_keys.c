@@ -1,6 +1,7 @@
 #include "commands_handlers.h"
 #include "hardware/buzzer.h"
 #include "hardware/clock.h"
+#include "shared/random.h"
 #include "storage/backup.h"
 #include "storage/storage.h"
 #include <stdio.h>
@@ -123,7 +124,7 @@ void cmd_add_key(int argc, char **argv) {
     key.is_checksum_valid   = true;
     key.created_at = clock_get_unix_time();
     strncpy(key.name, argv[2], KEY_NAME_MAX - 1);
-    memset(key.secret, 'A', KEY_SECRET_LEN); // TODO
+    generate_secret(key.secret);
 
     if (storage_key_save(&key)) {
         printf("key %u '%s' added\r\n", id, key.name);

@@ -55,18 +55,18 @@ char keypad_get_key(void) {
     char raw = scan_raw();
 
     if (raw != last_raw) {
-        // Reading changed — restart debounce timer
+        // Reading changed - restart debounce timer
         last_raw   = raw;
         stable_at  = make_timeout_time_ms(KEYPAD_DEBOUNCE_MS);
         return 0;
     }
 
-    // Still within debounce window — ignore
+    // Still within debounce window - ignore
     if (!time_reached(stable_at)) {
         return 0;
     }
 
-    // Stable reading — fire only on press transition (not hold, not release)
+    // Stable reading - fire only on press transition (not hold, not release)
     if (raw != 0 && raw != last_stable) {
         last_stable = raw;
         return raw;

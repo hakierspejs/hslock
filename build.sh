@@ -29,7 +29,7 @@ make -j$(nproc)
 cd ..
 
 cp build/hslock.uf2 hslock.uf2
-echo "build ok — hslock.uf2 ready"
+echo "build ok - hslock.uf2 ready"
 
 if [ $ERASE -eq 1 ]; then
     echo "erasing flash..."
