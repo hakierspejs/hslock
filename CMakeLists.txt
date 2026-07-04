@@ -71,7 +71,7 @@ configure_file(
 
 file(GLOB SERIAL_SOURCES   CONFIGURE_DEPENDS "serial/*.c")
 file(GLOB HARDWARE_SOURCES CONFIGURE_DEPENDS "hardware/*.c")
-file(GLOB INTERNET_SOURCES CONFIGURE_DEPENDS "internet/*.c")
+file(GLOB NETWORK_SOURCES CONFIGURE_DEPENDS "network/*.c")
 file(GLOB STORAGE_SOURCES  CONFIGURE_DEPENDS "storage/*.c")
 file(GLOB SHARED_SOURCES   CONFIGURE_DEPENDS "shared/*.c")
 
@@ -79,7 +79,7 @@ add_executable(hslock
     main.c
     ${SERIAL_SOURCES}
     ${HARDWARE_SOURCES}
-    ${INTERNET_SOURCES}
+    ${NETWORK_SOURCES}
     ${STORAGE_SOURCES}
     ${SHARED_SOURCES}
 )
@@ -93,7 +93,7 @@ target_link_libraries(hslock
     pico_stdlib
     pico_multicore
     pico_flash                              # flash_safe_execute
-    # pico_cyw43_arch_lwip_threadsafe_background
+    pico_cyw43_arch_lwip_threadsafe_background
     hardware_rtc
     hardware_pwm
     hardware_flash

@@ -14,12 +14,12 @@ void cmd_list_keys(int argc, char **argv) {
 
     if (count < 0) {
         printf("error: failed to read keys\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
     if (count == 0) {
         printf("no keys stored\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -47,7 +47,7 @@ void cmd_list_keys(int argc, char **argv) {
     }
 
     printf("\r\n%d key(s)\r\n", count);
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_get_key(int argc, char **argv) {
@@ -55,14 +55,14 @@ void cmd_get_key(int argc, char **argv) {
 
     if (id > KEY_ID_MAX) {
         printf("error: id must be 0-255\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     key_record_t key;
     if (!storage_key_get(id, &key)) {
         printf("error: key %u not found\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -85,14 +85,14 @@ void cmd_get_key(int argc, char **argv) {
     }
     printf("\r\n");
 
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_get_key_secret(int argc, char **argv) {
     // TODO
     printf("get-key-secret: [stub] would show secret + QR for key id=%s\r\n",
            argv[1]);
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_add_key(int argc, char **argv) {
@@ -100,19 +100,19 @@ void cmd_add_key(int argc, char **argv) {
 
     if (id > KEY_ID_MAX) {
         printf("error: id must be 0-255\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     if (storage_key_exists(id)) {
         printf("error: key %u already exists\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     if (strlen(argv[2]) >= KEY_NAME_MAX) {
         printf("error: name too long (max %d chars)\r\n", KEY_NAME_MAX - 1);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -131,7 +131,7 @@ void cmd_add_key(int argc, char **argv) {
         printf("error: failed to save key %u\r\n", id);
     }
 
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_rename_key(int argc, char **argv) {
@@ -139,20 +139,20 @@ void cmd_rename_key(int argc, char **argv) {
 
     if (id > KEY_ID_MAX) {
         printf("error: id must be 0-255\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     if (strlen(argv[2]) >= KEY_NAME_MAX) {
         printf("error: name too long (max %d chars)\r\n", KEY_NAME_MAX - 1);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     key_record_t key;
     if (!storage_key_get(id, &key)) {
         printf("error: key %u not found\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -165,7 +165,7 @@ void cmd_rename_key(int argc, char **argv) {
         printf("error: failed to save key %u\r\n", id);
     }
 
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_enable_key(int argc, char **argv) {
@@ -173,20 +173,20 @@ void cmd_enable_key(int argc, char **argv) {
 
     if (id > KEY_ID_MAX) {
         printf("error: id must be 0-255\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     key_record_t key;
     if (!storage_key_get(id, &key)) {
         printf("error: key %u not found\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     if (key.is_enabled) {
         printf("key %u is already enabled\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -197,7 +197,7 @@ void cmd_enable_key(int argc, char **argv) {
         printf("error: failed to save key %u\r\n", id);
     }
 
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_disable_key(int argc, char **argv) {
@@ -205,20 +205,20 @@ void cmd_disable_key(int argc, char **argv) {
 
     if (id > KEY_ID_MAX) {
         printf("error: id must be 0-255\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     key_record_t key;
     if (!storage_key_get(id, &key)) {
         printf("error: key %u not found\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     if (!key.is_enabled) {
         printf("key %u is already disabled\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -229,7 +229,7 @@ void cmd_disable_key(int argc, char **argv) {
         printf("error: failed to save key %u\r\n", id);
     }
 
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_delete_key(int argc, char **argv) {
@@ -237,13 +237,13 @@ void cmd_delete_key(int argc, char **argv) {
 
     if (id > KEY_ID_MAX) {
         printf("error: id must be 0-255\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     if (!storage_key_exists(id)) {
         printf("error: key %u does not exist\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -253,7 +253,7 @@ void cmd_delete_key(int argc, char **argv) {
         printf("error: failed to delete key %u\r\n", id);
     }
 
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_set_key_admin(int argc, char **argv) {
@@ -261,20 +261,20 @@ void cmd_set_key_admin(int argc, char **argv) {
 
     if (id > KEY_ID_MAX) {
         printf("error: id must be 0-255\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     key_record_t key;
     if (!storage_key_get(id, &key)) {
         printf("error: key %u not found\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     if (key.is_admin) {
         printf("key %u is already admin\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -285,7 +285,7 @@ void cmd_set_key_admin(int argc, char **argv) {
         printf("error: failed to save key %u\r\n", id);
     }
 
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_unset_key_admin(int argc, char **argv) {
@@ -293,20 +293,20 @@ void cmd_unset_key_admin(int argc, char **argv) {
 
     if (id > KEY_ID_MAX) {
         printf("error: id must be 0-255\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     key_record_t key;
     if (!storage_key_get(id, &key)) {
         printf("error: key %u not found\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     if (!key.is_admin) {
         printf("key %u is not admin\r\n", id);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -317,5 +317,5 @@ void cmd_unset_key_admin(int argc, char **argv) {
         printf("error: failed to save key %u\r\n", id);
     }
 
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }

@@ -1,13 +1,19 @@
 #include "commands_handlers.h"
 #include "hardware/buzzer.h"
+#include "network/ntp.h"
+#include "network/wifi.h"
 #include "storage/storage.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
 
 void cmd_sync_ntp(int argc, char **argv) {
-    // TODO
-    printf("sync-ntp: [stub] forcing NTP resync\r\n");
+    printf("syncing...\r\n");
+    if (ntp_sync()) {
+        printf("sync ok\r\n");
+    } else {
+        printf("error: sync failed\r\n");
+    }
     buzzer_beep_short();
 }
 
@@ -16,12 +22,12 @@ void cmd_set_wifi(int argc, char **argv) {
 
     if (strlen(argv[1]) >= WIFI_SSID_MAX) {
         printf("error: ssid too long (max %d chars)\r\n", WIFI_SSID_MAX - 1);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
     if (strlen(argv[2]) >= WIFI_PASSWORD_MAX) {
         printf("error: password too long (max %d chars)\r\n", WIFI_PASSWORD_MAX - 1);
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -33,9 +39,21 @@ void cmd_set_wifi(int argc, char **argv) {
     bool ok = storage_wifi_set(&cfg);
     printf("storage_wifi_set: %s\r\n", ok ? "ok" : "FAILED");
     if (!ok) {
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
-    buzzer_beep_short();
+    printf("reconnecting wifi...\r\n");
+    if (wifi_connect(cfg.ssid, cfg.password)) {
+        printf("syncing ntp...\r\n");
+        if (ntp_sync()) {
+            printf("ntp sync ok\r\n");
+        } else {
+            printf("ntp sync failed\r\n");
+        }
+    } else {
+        printf("wifi connect failed\r\n");
+    }
+
+    buzzer_play_command_ack();
 }

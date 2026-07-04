@@ -35,3 +35,20 @@ void buzzer_beep_long() {
     buzzer_off();
     sleep_ms(BUZZER_LONG_BEEP_DELAY);
 }
+
+void buzzer_play_boot() {
+    buzzer_beep_short();
+    buzzer_beep_short();
+    buzzer_beep_short();
+}
+
+void buzzer_play_command_ack() {
+    buzzer_beep_short();
+}
+
+void buzzer_play_ntp_sync_error() {
+    buzzer_beep_short();
+    buzzer_beep_medium();
+    buzzer_beep_short();
+    buzzer_beep_medium();
+}

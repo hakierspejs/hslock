@@ -49,7 +49,7 @@ static const command_t COMMANDS[] = {
     {"login",             false,  1,  1,   "login <otp>",                   "Enable admin mode via TOTP"},
     {"logout",            true,   0,  0,   "logout",                        "End admin session"},
     {"reboot",            true,   0,  0,   "reboot",                        "Reboot device"},
-    {"get-time",          true,   0,  0,   "get-time",                      "Show current RTC time and last NTP sync"},
+    {"get-time",          false,   0,  0,   "get-time",                      "Show current RTC time and last NTP sync"},
     {"sync-ntp",          true,   0,  0,   "sync-ntp",                      "Force immediate NTP resync"},
     {"set-wifi",          true,   2,  2,   "set-wifi <ssid> <password>",    "Save WiFi credentials"},
     {"list-keys",         true,   0,  0,   "list-keys",                     "List all keys (no secrets)"},
@@ -85,7 +85,7 @@ static void cmd_help(int argc, char **argv) {
         printf("  %-32s  %s\r\n", cmd->usage, cmd->description);
     }
     printf("\r\n");
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 // Handler lookup — must match COMMANDS table order
@@ -127,14 +127,14 @@ void commands_dispatch(int argc, char **argv) {
         if (cmd->requires_admin && !admin_mode) {
             printf("error: '%s' requires admin mode — use login <otp>\r\n",
                    cmd->name);
-            buzzer_beep_short();
+            buzzer_play_command_ack();
             return;
         }
 
         int user_args = argc - 1;
         if (user_args < cmd->min_args || user_args > cmd->max_args) {
             printf("error: usage: %s\r\n", cmd->usage);
-            buzzer_beep_short();
+            buzzer_play_command_ack();
             return;
         }
 
@@ -144,5 +144,5 @@ void commands_dispatch(int argc, char **argv) {
 
     printf("error: unknown command '%s' — type 'help' for available commands\r\n",
            argv[0]);
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }

@@ -12,7 +12,7 @@ void cmd_export_keys(int argc, char **argv) {
     int len = backup_export(export_buf, sizeof(export_buf));
     if (len < 0) {
         printf("error: export failed\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -21,7 +21,7 @@ void cmd_export_keys(int argc, char **argv) {
     printf("%s\r\n", b64_buf);
     printf("--- END HSLOCK BACKUP ---\r\n");
 
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_import_keys(int argc, char **argv) {
@@ -30,7 +30,7 @@ void cmd_import_keys(int argc, char **argv) {
     int len = base64_decode(argv[1], strlen(argv[1]), import_buf);
     if (len < 0) {
         printf("error: invalid base64\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -45,5 +45,5 @@ void cmd_import_keys(int argc, char **argv) {
         printf("error: import failed\r\n");
     }
 
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }

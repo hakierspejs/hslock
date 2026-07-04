@@ -14,4 +14,8 @@ void buzzer_beep_short();
 void buzzer_beep_medium();
 void buzzer_beep_long();
 
+void buzzer_play_boot();
+void buzzer_play_command_ack();
+void buzzer_play_ntp_sync_error();
+
 #endif

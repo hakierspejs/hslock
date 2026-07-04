@@ -3,6 +3,7 @@
 #include "hardware/clock.h"
 #include "hardware/latch.h"
 #include "hardware/watchdog.h"
+#include "network/ntp.h"
 #include "storage/storage.h"
 #include "version.h"
 #include "pico/stdlib.h"
@@ -15,14 +16,23 @@ void cmd_status(int argc, char **argv) {
 
     wifi_config_t wifi;
     if (storage_wifi_get(&wifi)) {
-        printf("wifi:      ssid=%s password=%s\r\n", wifi.ssid, wifi.password);
+        printf("wifi:      ssid=%s\r\n", wifi.ssid);
     } else {
         printf("wifi:      not configured\r\n");
     }
 
-    // TODO
+    uint32_t last = ntp_last_sync_time();
+    if (last > 0) {
+        time_t lt = (time_t)last;
+        struct tm *ltm = gmtime(&lt);
+        char lbuf[20];
+        strftime(lbuf, sizeof(lbuf), "%Y-%m-%d %H:%M:%S", ltm);
+        printf("last sync: %s UTC\r\n", lbuf);
+    } else {
+        printf("last sync: never\r\n");
+    }
 
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_get_time(int argc, char **argv) {
@@ -30,7 +40,7 @@ void cmd_get_time(int argc, char **argv) {
 
     if (unix_time == 0) {
         printf("time: not set\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
@@ -40,12 +50,23 @@ void cmd_get_time(int argc, char **argv) {
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
     printf("time: %s UTC\r\n", buf);
 
-    buzzer_beep_short();
+    uint32_t last = ntp_last_sync_time();
+    if (last > 0) {
+        time_t lt = (time_t)last;
+        struct tm *ltm = gmtime(&lt);
+        char lbuf[20];
+        strftime(lbuf, sizeof(lbuf), "%Y-%m-%d %H:%M:%S", ltm);
+        printf("last sync: %s UTC\r\n", lbuf);
+    } else {
+        printf("last sync: never\r\n");
+    }
+
+    buzzer_play_command_ack();
 }
 
 void cmd_test(int argc, char **argv) {
     for (int i = 0; i < 3; i++) {
-        buzzer_beep_short();
+        buzzer_play_command_ack();
     }
     latch_open();
 }
@@ -55,18 +76,18 @@ void cmd_login(int argc, char **argv) {
     printf("login: [stub] would verify OTP '%s' against admin keys\r\n", argv[1]);
     admin_mode = true;
     printf("login: admin mode enabled\r\n");
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_logout(int argc, char **argv) {
     admin_mode = false;
     printf("logout: admin mode disabled\r\n");
-    buzzer_beep_short();
+    buzzer_play_command_ack();
 }
 
 void cmd_reboot(int argc, char **argv) {
     printf("rebooting...\r\n");
-    buzzer_beep_short();
+    buzzer_play_command_ack();
     watchdog_reboot(0, 0, 100);
     while (true) tight_loop_contents();
 }
