@@ -1,3 +1,4 @@
 #pragma once
 #define GIT_HASH   "@GIT_HASH@"
+#define GIT_DIRTY   @GIT_DIRTY@
 #define BUILD_DATE "@BUILD_DATE@"

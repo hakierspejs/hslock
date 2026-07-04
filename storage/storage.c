@@ -1,6 +1,7 @@
 #include "storage.h"
 
 #include "lfs.h"
+#include "lfs_util.h"
 #include "pico/stdlib.h"
 #include "pico/flash.h"
 #include "hardware/flash.h"
@@ -33,6 +34,55 @@ static uint8_t lfs_file_buf[LFS_CACHE_SIZE];
 static const struct lfs_file_config LFS_FILE_CFG = {
     .buffer = lfs_file_buf,
 };
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    uint16_t id;
+    char     name[KEY_NAME_MAX];
+    uint8_t  secret[KEY_SECRET_LEN];
+    bool     is_enabled;
+    bool     is_admin;
+    uint32_t created_at;
+    uint32_t checksum;
+} key_record_stored_t;
+
+static uint32_t key_checksum(const key_record_stored_t *key) {
+    uint32_t crc = 0xFFFFFFFF;
+    crc = lfs_crc(crc, &key->id,         sizeof(key->id));
+    crc = lfs_crc(crc, key->name,         sizeof(key->name));
+    crc = lfs_crc(crc, key->secret,       sizeof(key->secret));
+    crc = lfs_crc(crc, &key->is_enabled,  sizeof(key->is_enabled));
+    crc = lfs_crc(crc, &key->is_admin,    sizeof(key->is_admin));
+    crc = lfs_crc(crc, &key->created_at,  sizeof(key->created_at));
+    return crc;
+}
+
+static key_record_stored_t to_stored(const key_record_t *k) {
+    key_record_stored_t s;
+    s.id         = k->id;
+    s.is_enabled = k->is_enabled;
+    s.is_admin   = k->is_admin;
+    s.created_at = k->created_at;
+    memcpy(s.name,   k->name,   sizeof(s.name));
+    memcpy(s.secret, k->secret, sizeof(s.secret));
+    s.checksum   = key_checksum(&s);
+    return s;
+}
+
+static key_record_t to_record(const key_record_stored_t *s) {
+    key_record_t k;
+    k.id         = s->id;
+    k.is_enabled = s->is_enabled;
+    k.is_admin   = s->is_admin;
+    k.created_at = s->created_at;
+    k.is_checksum_valid   = (s->checksum == key_checksum(s));
+    memcpy(k.name,   s->name,   sizeof(k.name));
+    memcpy(k.secret, s->secret, sizeof(k.secret));
+    return k;
+}
 
 // ---------------------------------------------------------------------------
 // Flash block device callbacks
@@ -141,16 +191,13 @@ static void key_path(uint16_t id, char *out, size_t out_size) {
 
 bool storage_init(void) {
     int rc = lfs_mount(&lfs, &LFS_CFG);
-    printf("[storage] lfs_mount rc=%d\r\n", rc);
 
     if (rc < 0) {
         printf("[storage] mount failed, formatting...\r\n");
         rc = lfs_format(&lfs, &LFS_CFG);
-        printf("[storage] lfs_format rc=%d\r\n", rc);
         if (rc < 0) return false;
 
         rc = lfs_mount(&lfs, &LFS_CFG);
-        printf("[storage] lfs_mount after format rc=%d\r\n", rc);
         if (rc < 0) return false;
     }
 
@@ -219,9 +266,17 @@ bool storage_key_get(uint16_t id, key_record_t *out) {
     if (lfs_file_opencfg(&lfs, &f, path, LFS_O_RDONLY, &LFS_FILE_CFG) < 0)
         return false;
 
-    lfs_ssize_t n = lfs_file_read(&lfs, &f, out, sizeof(key_record_t));
+    key_record_stored_t stored;
+    lfs_ssize_t n = lfs_file_read(&lfs, &f, &stored, sizeof(stored));
     lfs_file_close(&lfs, &f);
-    return n == (lfs_ssize_t)sizeof(key_record_t);
+    if (n != (lfs_ssize_t)sizeof(stored)) return false;
+
+    *out = to_record(&stored);
+
+    if (!out->is_checksum_valid)
+        printf("[storage] key %u checksum mismatch\r\n", id);
+
+    return true;
 }
 
 bool storage_key_save(const key_record_t *key) {
@@ -229,14 +284,16 @@ bool storage_key_save(const key_record_t *key) {
     char path[40];
     key_path(key->id, path, sizeof(path));
 
+    key_record_stored_t stored = to_stored(key);  // checksum computed here
+
     lfs_file_t f;
     int flags = LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC;
     if (lfs_file_opencfg(&lfs, &f, path, flags, &LFS_FILE_CFG) < 0)
         return false;
 
-    lfs_ssize_t n = lfs_file_write(&lfs, &f, key, sizeof(key_record_t));
+    lfs_ssize_t n = lfs_file_write(&lfs, &f, &stored, sizeof(stored));
     lfs_file_close(&lfs, &f);
-    return n == (lfs_ssize_t)sizeof(key_record_t);
+    return n == (lfs_ssize_t)sizeof(stored);
 }
 
 bool storage_key_delete(uint16_t id) {
@@ -248,6 +305,8 @@ bool storage_key_delete(uint16_t id) {
 
 int storage_key_list(key_record_t *out, int max_count) {
     if (!mounted) return -1;
+
+    if (max_count > KEY_MAX_COUNT) max_count = KEY_MAX_COUNT;
 
     lfs_dir_t dir;
     if (lfs_dir_open(&lfs, &dir, DIR_KEYS) < 0)

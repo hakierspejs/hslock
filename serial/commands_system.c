@@ -1,0 +1,72 @@
+#include "commands_handlers.h"
+#include "hardware/buzzer.h"
+#include "hardware/clock.h"
+#include "hardware/latch.h"
+#include "hardware/watchdog.h"
+#include "storage/storage.h"
+#include "version.h"
+#include "pico/stdlib.h"
+#include <stdio.h>
+#include <time.h>
+
+void cmd_status(int argc, char **argv) {
+    printf("mode:      %s\r\n", admin_mode ? "admin" : "user");
+    printf("build:     %s %s %s\r\n", GIT_HASH, GIT_DIRTY ? "[with changes]" : "", BUILD_DATE);
+
+    wifi_config_t wifi;
+    if (storage_wifi_get(&wifi)) {
+        printf("wifi:      ssid=%s password=%s\r\n", wifi.ssid, wifi.password);
+    } else {
+        printf("wifi:      not configured\r\n");
+    }
+
+    // TODO
+
+    buzzer_beep_short();
+}
+
+void cmd_get_time(int argc, char **argv) {
+    uint32_t unix_time = clock_get_unix_time();
+
+    if (unix_time == 0) {
+        printf("time: not set\r\n");
+        buzzer_beep_short();
+        return;
+    }
+
+    time_t t = (time_t)unix_time;
+    struct tm *tm = gmtime(&t);
+    char buf[20];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
+    printf("time: %s UTC\r\n", buf);
+
+    buzzer_beep_short();
+}
+
+void cmd_test(int argc, char **argv) {
+    for (int i = 0; i < 3; i++) {
+        buzzer_beep_short();
+    }
+    latch_open();
+}
+
+void cmd_login(int argc, char **argv) {
+    // TODO
+    printf("login: [stub] would verify OTP '%s' against admin keys\r\n", argv[1]);
+    admin_mode = true;
+    printf("login: admin mode enabled\r\n");
+    buzzer_beep_short();
+}
+
+void cmd_logout(int argc, char **argv) {
+    admin_mode = false;
+    printf("logout: admin mode disabled\r\n");
+    buzzer_beep_short();
+}
+
+void cmd_reboot(int argc, char **argv) {
+    printf("rebooting...\r\n");
+    buzzer_beep_short();
+    watchdog_reboot(0, 0, 100);
+    while (true) tight_loop_contents();
+}

@@ -2,21 +2,26 @@
 
 ## Building
 
-```sh
-./build.sh
+```bash
+./build.sh [options]
 ```
 
-## Install
+| Option | Description |
+| -------- | ------------- |
+| `--clean` | Remove build directory before building |
+| `--flash` | Flash firmware after building |
+| `--erase` | Erase entire flash (remove all keys) |
 
-```sh
-picotool load build/hslock.elf -f
-picotool reboot
-```
+Device must have the board connected in BOOTSEL mode for `--flash` and `--erase`.
 
 ## Connect
 
-Use PuTTY to connect via serial USB.
+Use PuTTY or screen to connect via serial USB.
 
 ```sh
 putty -serial /dev/ttyACM0 -sercfg 115200,8,n,1,N
+```
+
+```sh
+screen /dev/ttyACM0 115200
 ```

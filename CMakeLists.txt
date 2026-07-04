@@ -22,11 +22,21 @@ target_compile_definitions(littlefs PUBLIC
     LFS_NO_MALLOC       # use static allocation only
     LFS_NO_DEBUG        # strip debug prints in release
 )
- 
+
+# ---------------------------------------------------------------------------
+# base64
+# ---------------------------------------------------------------------------
+
+add_library(base64 STATIC
+    libs/base64/base64.c
+)
+target_include_directories(base64 PUBLIC libs/base64)
+
 # ---------------------------------------------------------------------------
 # Project sources
 # ---------------------------------------------------------------------------
 
+# Get git commit hash
 execute_process(
     COMMAND git rev-parse --short HEAD
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -36,6 +46,20 @@ execute_process(
 )
 if(NOT GIT_HASH)
     set(GIT_HASH "unknown")
+endif()
+
+# Detect uncommitted changes
+execute_process(
+    COMMAND git diff --quiet HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    RESULT_VARIABLE GIT_DIRTY
+    ERROR_QUIET
+)
+# Returns 0 if clean, 1 if dirty
+if(NOT GIT_DIRTY EQUAL 0)
+    set(GIT_DIRTY 1)
+else()
+    set(GIT_DIRTY 0)
 endif()
 
 string(TIMESTAMP BUILD_DATE "%Y-%m-%d %H:%M UTC" UTC)
@@ -74,6 +98,7 @@ target_link_libraries(hslock
     hardware_pwm
     hardware_flash
     littlefs
+    base64
 )
 
 pico_enable_stdio_usb(hslock 1)

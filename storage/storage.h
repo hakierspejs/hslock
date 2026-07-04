@@ -9,6 +9,9 @@
 // Key record — fields stored per TOTP key
 // ---------------------------------------------------------------------------
 
+#define KEY_MAX_COUNT 256
+#define KEY_ID_MAX KEY_MAX_COUNT - 1
+
 #define KEY_NAME_MAX   32
 #define KEY_SECRET_LEN 20   // HMAC-SHA1 seed, matches old Arduino format
 
@@ -19,6 +22,7 @@ typedef struct {
     bool     is_enabled;
     bool     is_admin;
     uint32_t created_at;    // unix timestamp
+    bool     is_checksum_valid;
 } key_record_t;
 
 // ---------------------------------------------------------------------------
