@@ -6,6 +6,7 @@
 #include "hardware/buzzer.h"
 #include "hardware/keypad.h"
 #include "hardware/latch.h"
+#include "hardware/light.h"
 
 #include "network/wifi.h"
 #include "network/ntp.h"
@@ -67,6 +68,7 @@ int main(void) {
  
     buzzer_init();
     latch_init();
+    light_init();
 
     buzzer_beep_short();
     

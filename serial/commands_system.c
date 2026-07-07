@@ -2,6 +2,7 @@
 #include "hardware/buzzer.h"
 #include "hardware/clock.h"
 #include "hardware/latch.h"
+#include "hardware/light.h"
 #include "hardware/watchdog.h"
 #include "network/ntp.h"
 #include "storage/storage.h"
@@ -68,6 +69,9 @@ void cmd_test(int argc, char **argv) {
     for (int i = 0; i < 3; i++) {
         buzzer_play_command_ack();
     }
+    light_on();
+    sleep_ms(1000);
+    light_off();
     latch_open();
 }
 
