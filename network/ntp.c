@@ -16,9 +16,9 @@
 // Constants
 // ---------------------------------------------------------------------------
 
-#define NTP_PORT  123
+#define NTP_PORT   123
 #define NTP_SERVER "pool.ntp.org"
-#define NTP_DELTA  2208988800UL  // seconds between 1900 and 1970 epochs
+#define NTP_DELTA  2208988800UL // seconds between 1900 and 1970 epochs
 
 // ---------------------------------------------------------------------------
 // State
@@ -32,9 +32,9 @@ typedef enum {
     NTP_STATE_FAILED,
 } ntp_state_t;
 
-static ntp_state_t    ntp_state            = NTP_STATE_IDLE;
-static struct udp_pcb *ntp_pcb             = NULL;
-static ip_addr_t      server_addr;
+static ntp_state_t     ntp_state = NTP_STATE_IDLE;
+static struct udp_pcb *ntp_pcb   = NULL;
+static ip_addr_t       server_addr;
 
 static bool     synced                 = false;
 static uint32_t last_sync_unix         = 0;
@@ -45,15 +45,15 @@ static uint64_t last_sync_monotonic_us = 0;
 // ---------------------------------------------------------------------------
 
 static bool rollback_check(uint32_t new_time) {
-    if (!synced) return true;  // no floor before first sync
+    if (!synced)
+        return true; // no floor before first sync
 
     uint64_t elapsed_us = time_us_64() - last_sync_monotonic_us;
     uint32_t elapsed_s  = (uint32_t)(elapsed_us / 1000000ULL);
     uint32_t floor      = last_sync_unix + elapsed_s - NTP_ROLLBACK_EPSILON_S;
 
     if (new_time < floor) {
-        printf("[ntp] rollback rejected: got %u, floor is %u\r\n",
-               new_time, floor);
+        printf("[ntp] rollback rejected: got %u, floor is %u\r\n", new_time, floor);
         return false;
     }
 
@@ -76,8 +76,8 @@ static void apply_time(uint32_t unix_time) {
 // NTP response callback
 // ---------------------------------------------------------------------------
 
-static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p,
-                         const ip_addr_t *addr, u16_t port) {
+static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr,
+                        u16_t port) {
     if (p->len < 48) {
         printf("[ntp] response too short\r\n");
         pbuf_free(p);
@@ -89,11 +89,8 @@ static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p,
     pbuf_copy_partial(p, buf, 48, 0);
     pbuf_free(p);
 
-    uint32_t seconds_since_1900 =
-        ((uint32_t)buf[40] << 24) |
-        ((uint32_t)buf[41] << 16) |
-        ((uint32_t)buf[42] << 8)  |
-         (uint32_t)buf[43];
+    uint32_t seconds_since_1900 = ((uint32_t)buf[40] << 24) | ((uint32_t)buf[41] << 16) |
+                                  ((uint32_t)buf[42] << 8) | (uint32_t)buf[43];
 
     uint32_t unix_time = seconds_since_1900 - NTP_DELTA;
 
@@ -119,10 +116,10 @@ static void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
 
     server_addr = *ipaddr;
 
-    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, 48, PBUF_RAM);
-    uint8_t *req = (uint8_t *)p->payload;
+    struct pbuf *p   = pbuf_alloc(PBUF_TRANSPORT, 48, PBUF_RAM);
+    uint8_t     *req = (uint8_t *)p->payload;
     memset(req, 0, 48);
-    req[0] = 0x1B;  // LI=0, VN=3, Mode=3 (client)
+    req[0] = 0x1B; // LI=0, VN=3, Mode=3 (client)
 
     udp_sendto(ntp_pcb, p, &server_addr, NTP_PORT);
     pbuf_free(p);
@@ -180,7 +177,7 @@ bool ntp_sync(void) {
         }
     }
 
-    bool ok = ntp_state == NTP_STATE_SUCCESS;
+    bool ok   = ntp_state == NTP_STATE_SUCCESS;
     ntp_state = NTP_STATE_IDLE;
 
     udp_remove(ntp_pcb);
@@ -190,12 +187,14 @@ bool ntp_sync(void) {
 }
 
 void ntp_task(void) {
-    if (!synced) return;
+    if (!synced)
+        return;
 
     uint64_t elapsed_us = time_us_64() - last_sync_monotonic_us;
     uint32_t elapsed_s  = (uint32_t)(elapsed_us / 1000000ULL);
 
-    if (elapsed_s < NTP_RESYNC_INTERVAL_S) return;
+    if (elapsed_s < NTP_RESYNC_INTERVAL_S)
+        return;
 
     printf("[ntp] periodic resync...\r\n");
     if (!ntp_sync()) {

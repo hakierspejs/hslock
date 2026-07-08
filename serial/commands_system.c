@@ -24,9 +24,9 @@ void cmd_status(int argc, char **argv) {
 
     uint32_t last = ntp_last_sync_time();
     if (last > 0) {
-        time_t lt = (time_t)last;
+        time_t     lt  = (time_t)last;
         struct tm *ltm = gmtime(&lt);
-        char lbuf[20];
+        char       lbuf[20];
         strftime(lbuf, sizeof(lbuf), "%Y-%m-%d %H:%M:%S", ltm);
         printf("last sync: %s UTC\r\n", lbuf);
     } else {
@@ -45,17 +45,17 @@ void cmd_get_time(int argc, char **argv) {
         return;
     }
 
-    time_t t = (time_t)unix_time;
+    time_t     t  = (time_t)unix_time;
     struct tm *tm = gmtime(&t);
-    char buf[20];
+    char       buf[20];
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
     printf("time: %s UTC\r\n", buf);
 
     uint32_t last = ntp_last_sync_time();
     if (last > 0) {
-        time_t lt = (time_t)last;
+        time_t     lt  = (time_t)last;
         struct tm *ltm = gmtime(&lt);
-        char lbuf[20];
+        char       lbuf[20];
         strftime(lbuf, sizeof(lbuf), "%Y-%m-%d %H:%M:%S", ltm);
         printf("last sync: %s UTC\r\n", lbuf);
     } else {
@@ -93,5 +93,6 @@ void cmd_reboot(int argc, char **argv) {
     printf("rebooting...\r\n");
     buzzer_play_command_ack();
     watchdog_reboot(0, 0, 100);
-    while (true) tight_loop_contents();
+    while (true)
+        tight_loop_contents();
 }

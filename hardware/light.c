@@ -3,7 +3,6 @@
 
 #include <stdio.h>
 
-
 void light_init() {
     gpio_init(LIGHT_PIN);
     gpio_set_dir(LIGHT_PIN, GPIO_OUT);

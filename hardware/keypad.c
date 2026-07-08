@@ -2,12 +2,15 @@
 #include "pico/stdlib.h"
 #include "pico/time.h"
 
+// clang-format off
+// Kept as a 4x4 grid mirroring the physical keypad layout.
 static const char KEY_MAP[KEYPAD_ROWS][KEYPAD_COLS] = {
     {'1', '2', '3', 'A'},
     {'4', '5', '6', 'B'},
     {'7', '8', '9', 'C'},
     {'*', '0', '#', 'D'}
 };
+// clang-format on
 
 void keypad_init(void) {
     // Rows: outputs, default HIGH
@@ -48,16 +51,16 @@ static char scan_raw(void) {
 }
 
 char keypad_get_key(void) {
-    static char             last_raw    = 0;
-    static char             last_stable = 0;
-    static absolute_time_t  stable_at   = {0};
+    static char            last_raw    = 0;
+    static char            last_stable = 0;
+    static absolute_time_t stable_at   = {0};
 
     char raw = scan_raw();
 
     if (raw != last_raw) {
         // Reading changed - restart debounce timer
-        last_raw   = raw;
-        stable_at  = make_timeout_time_ms(KEYPAD_DEBOUNCE_MS);
+        last_raw  = raw;
+        stable_at = make_timeout_time_ms(KEYPAD_DEBOUNCE_MS);
         return 0;
     }
 

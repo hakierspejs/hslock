@@ -1,0 +1,16 @@
+# Config tuned to the existing hand-written style:
+#   4-space indent, spaces only, K&R braces, 100-col.
+# The Align* + SortIncludes:false options preserve the author's manual
+# column alignment (aligned #defines, struct members, tables) as much as
+# clang-format allows. Residual churn is alignment inside call-args and
+# brace-init tables, which clang-format cannot preserve.
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+SortIncludes: false
+AlignConsecutiveMacros: AcrossComments
+AlignConsecutiveDeclarations: true
+AlignConsecutiveAssignments: true
+AllowShortFunctionsOnASingleLine: None

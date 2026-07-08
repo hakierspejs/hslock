@@ -10,10 +10,10 @@
 // ---------------------------------------------------------------------------
 
 #define KEY_MAX_COUNT 256
-#define KEY_ID_MAX KEY_MAX_COUNT - 1
+#define KEY_ID_MAX    KEY_MAX_COUNT - 1
 
 #define KEY_NAME_MAX   32
-#define KEY_SECRET_LEN 20   // HMAC-SHA1 seed, matches old Arduino format
+#define KEY_SECRET_LEN 20 // HMAC-SHA1 seed, matches old Arduino format
 
 typedef struct {
     uint16_t id;
@@ -21,7 +21,7 @@ typedef struct {
     uint8_t  secret[KEY_SECRET_LEN];
     bool     is_enabled;
     bool     is_admin;
-    uint32_t created_at;    // unix timestamp
+    uint32_t created_at; // unix timestamp
     bool     is_checksum_valid;
 } key_record_t;
 
@@ -53,10 +53,10 @@ bool storage_wifi_clear(void);
 // Key CRUD
 bool storage_key_exists(uint16_t id);
 bool storage_key_get(uint16_t id, key_record_t *out);
-bool storage_key_save(const key_record_t *key);   // create or update
+bool storage_key_save(const key_record_t *key); // create or update
 bool storage_key_delete(uint16_t id);
 
 // List all keys. Returns count written into out[].
-int  storage_key_list(key_record_t *out, int max_count);
+int storage_key_list(key_record_t *out, int max_count);
 
 #endif
