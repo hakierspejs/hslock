@@ -72,7 +72,7 @@ COV_FLAGS  := -g -O0 --coverage -fprofile-abs-path
 # lcov 2.x: enable branch coverage everywhere; tolerate the benign
 # inconsistencies host coverage of firmware naturally produces.
 LCOV_RC     := --rc branch_coverage=1
-LCOV_IGNORE := --ignore-errors unused,empty,mismatch,inconsistent,source,gcov,negative,range
+LCOV_IGNORE := --ignore-errors unused,empty,mismatch,inconsistent,source,gcov,negative
 LCOV        := lcov $(LCOV_RC) $(LCOV_IGNORE)
 
 .PHONY: all asan valgrind coverage clean
