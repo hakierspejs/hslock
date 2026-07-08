@@ -159,8 +159,6 @@ coverage: | $(COV_DIR)/obj
 	genhtml $(LCOV_RC) $(GENHTML_IGNORE) --branch-coverage \
 	    --legend --title "hslock host coverage" \
 	    --output-directory $(COV_DIR)/html $(COV_DIR)/coverage.info
-	@echo "== coverage: generating summary (txt + json) =="
-	./coverage-summary.sh $(COV_DIR)/coverage.info $(COV_DIR)
 	@echo "== coverage OK: report at $(COV_DIR)/html/index.html =="
 
 $(BUILD):
