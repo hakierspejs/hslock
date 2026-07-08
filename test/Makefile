@@ -18,6 +18,13 @@ ROOT      := ..
 BUILD     := build
 COV_DIR   := coverage
 
+# Absolute repo root, used to filter coverage to first-party sources WITHOUT
+# assuming the checkout dir is literally named "hslock". Coverage is built with
+# -fprofile-abs-path, so the .info tracefiles carry absolute source paths;
+# extracting "$(REPO_ROOT)/*" keeps first-party files regardless of dir name.
+# Prefer git's toplevel; fall back to the parent dir for non-git checkouts.
+REPO_ROOT := $(or $(shell git -C $(CURDIR) rev-parse --show-toplevel 2>/dev/null),$(abspath $(ROOT)))
+
 # Real first-party / third-party sources exercised by the harnesses.
 SHARED    := $(ROOT)/shared
 BASE32    := $(ROOT)/libs/base32
@@ -143,7 +150,7 @@ coverage: | $(COV_DIR)/obj
 	$(LCOV) --add-tracefile $(COV_DIR)/base.info \
 	    --add-tracefile $(COV_DIR)/run.info --output-file $(COV_DIR)/total.info
 	@echo "== coverage: filtering to first-party sources =="
-	$(LCOV) --extract $(COV_DIR)/total.info '*/hslock/*' \
+	$(LCOV) --extract $(COV_DIR)/total.info '$(REPO_ROOT)/*' \
 	    --output-file $(COV_DIR)/first.info
 	$(LCOV) --remove $(COV_DIR)/first.info \
 	    '*/libs/qrcodegen/*' '*/libs/littlefs/*' '*/test/*' '/usr/*' \
