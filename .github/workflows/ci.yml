@@ -1,0 +1,15 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pin clang-format to match the version used locally. shellcheck is
+      # preinstalled on GitHub-hosted ubuntu runners.
+      - run: pipx install clang-format==19.1.7
+      - run: ./ci --action=check

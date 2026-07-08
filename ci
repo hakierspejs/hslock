@@ -11,10 +11,15 @@ for a in "$@"; do case $a in
   *) echo "usage: ./ci [--check=lint] [--action=fix|check]" >&2; exit 2 ;;
 esac; done
 
-srcs() { git ls-files '*.c' '*.h' ':!:libs/**' ':!:version.h'; }
+srcs()   { git ls-files '*.c' '*.h' ':!:libs/**' ':!:version.h'; }
+shells() { git ls-files ':!:libs/**' | while read -r f; do
+             if head -1 -- "$f" | grep -q '^#!.*sh'; then printf '%s\n' "$f"; fi
+           done; }
 
 case $check.$action in
-  lint.fix)   srcs | xargs -r clang-format -i ;;
-  lint.check) srcs | xargs -r clang-format --dry-run --Werror ;;
+  lint.fix)   srcs   | xargs -r clang-format -i
+              shells | xargs -r shellcheck ;;              # no autofix; reports only
+  lint.check) srcs   | xargs -r clang-format --dry-run --Werror
+              shells | xargs -r shellcheck ;;
   *) echo "unknown --check=$check --action=$action" >&2; exit 2 ;;
 esac

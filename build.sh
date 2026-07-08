@@ -25,7 +25,7 @@ fi
 mkdir -p build
 cd build
 cmake -DPICO_BOARD=pico_w ..
-make -j$(nproc)
+make -j"$(nproc)"
 cd ..
 
 cp build/hslock.uf2 hslock.uf2
