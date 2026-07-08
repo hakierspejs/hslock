@@ -41,9 +41,8 @@ int main(void) {
 
     static uint8_t qr[qrcodegen_BUFFER_LEN_MAX];
     static uint8_t tmp[qrcodegen_BUFFER_LEN_MAX];
-    bool           ok = qrcodegen_encodeText(uri, tmp, qr, qrcodegen_Ecc_MEDIUM,
-                                             qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
-                                             qrcodegen_Mask_AUTO, true);
+    bool ok = qrcodegen_encodeText(uri, tmp, qr, qrcodegen_Ecc_MEDIUM, qrcodegen_VERSION_MIN,
+                                   qrcodegen_VERSION_MAX, qrcodegen_Mask_AUTO, true);
     assert(ok);
 
     int size = qrcodegen_getSize(qr);
