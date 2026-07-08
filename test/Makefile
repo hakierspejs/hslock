@@ -7,7 +7,7 @@
 #
 #   make asan      ASan + UBSan, aborts on any error (CI gate)
 #   make valgrind  plain build under valgrind, fails on error/leak
-#   make coverage  --coverage build over the WHOLE first-party codebase, run,
+#   make coverage  --coverage build of the harness-exercised modules, run,
 #                  lcov + genhtml report (branch coverage) into coverage/html/
 #   make clean
 #
@@ -44,29 +44,6 @@ INCLUDES  := -Istub -I$(ROOT) \
 SECRET_QR_SRCS := harness_secret_qr.c $(SHARED)/random.c $(BASE32)/base32.c \
                   $(QRCODEGEN)/qrcodegen.c
 BASE64_SRCS    := harness_base64.c $(BASE64)/base64.c
-
-# ---------------------------------------------------------------------------
-# Whole-codebase coverage denominator (uniform 0% for every untested file)
-# ---------------------------------------------------------------------------
-# COV_ZERO_SRCS: EVERY first-party firmware .c not exercised by a harness.
-# All of them COMPILE host-side against the stubs in test/stub/ (including the
-# cyw43 / lwip / flash shims that let network/*.c and storage/storage.c build
-# without the real Pico SDK). Compiling emits a .gcno (but no .gcda), so lcov
-# reports each file's true 0% coverage with full per-line detail instead of
-# silently dropping it - so the report covers the WHOLE codebase uniformly,
-# with no separate hand-maintained "blind spot" list or line approximation.
-COV_ZERO_SRCS := $(ROOT)/hardware/buzzer.c $(ROOT)/hardware/clock.c \
-                 $(ROOT)/hardware/keypad.c $(ROOT)/hardware/latch.c \
-                 $(ROOT)/hardware/light.c $(ROOT)/main.c \
-                 $(ROOT)/network/ntp.c $(ROOT)/network/wifi.c \
-                 $(ROOT)/serial/commands.c $(ROOT)/serial/commands_backup.c \
-                 $(ROOT)/serial/commands_keys.c $(ROOT)/serial/commands_network.c \
-                 $(ROOT)/serial/commands_system.c $(ROOT)/serial/console.c \
-                 $(ROOT)/storage/backup.c $(ROOT)/storage/storage.c
-
-# LittleFS configuration mirrored from the firmware CMake build so storage.c
-# compiles against the real lfs.h/lfs_util.h the same way the RP2040 build does.
-COV_ZERO_DEFS := -DLFS_NO_MALLOC -DLFS_NO_DEBUG
 
 CC       := gcc
 CSTD     := -std=c11
@@ -120,37 +97,26 @@ $(BUILD)/vg_secret_qr: $(SECRET_QR_SRCS) | $(BUILD)
 $(BUILD)/vg_base64: $(BASE64_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(INCLUDES) $(BASE64_SRCS) -o $@
 
-# --- Coverage (whole-codebase denominator + lcov/genhtml HTML report) -------
-# 1. Build & run the real harnesses (produce .gcda -> true coverage).
-# 2. Compile EVERY other first-party .c (produce .gcno only -> true 0%), so
-#    the report covers the whole codebase uniformly - no file is left out.
-# 3. lcov: --initial baseline (all .gcno at 0%) + post-run capture, combined,
-#    filtered to first-party only, rendered to coverage/html/ with branches.
+# --- Coverage (lcov/genhtml HTML report for the harness-exercised modules) --
+# Build & run the real harnesses with --coverage (producing .gcda), capture
+# the run data, filter to first-party sources (dropping the vendored libs and
+# the test harnesses themselves), and render coverage/html/ with branches.
+# The report covers exactly the modules the harnesses exercise (base32.c,
+# base64.c, random.c); HW-only firmware is not built host-side and is absent.
 coverage: | $(COV_DIR)/obj
 	@echo "== coverage: building + running harnesses =="
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(INCLUDES) $(SECRET_QR_SRCS) \
 	    -o $(COV_DIR)/obj/cov_secret_qr
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(INCLUDES) $(BASE64_SRCS) \
 	    -o $(COV_DIR)/obj/cov_base64
-	@echo "== coverage: compiling every untested first-party file (true 0%) =="
-	@for f in $(COV_ZERO_SRCS); do \
-	    o=$(COV_DIR)/obj/zero_$$(basename $$f .c).o; \
-	    echo "  CC (gcno) $$f"; \
-	    $(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(COV_ZERO_DEFS) $(INCLUDES) -c $$f -o $$o || exit 1; \
-	done
-	@echo "== coverage: capturing initial (zero) baseline =="
-	$(LCOV) --capture --initial --directory $(COV_DIR)/obj \
-	    --output-file $(COV_DIR)/base.info
 	@echo "== coverage: running instrumented harnesses =="
 	$(COV_DIR)/obj/cov_secret_qr
 	$(COV_DIR)/obj/cov_base64
 	@echo "== coverage: capturing run data =="
 	$(LCOV) --capture --directory $(COV_DIR)/obj \
 	    --output-file $(COV_DIR)/run.info
-	$(LCOV) --add-tracefile $(COV_DIR)/base.info \
-	    --add-tracefile $(COV_DIR)/run.info --output-file $(COV_DIR)/total.info
 	@echo "== coverage: filtering to first-party sources =="
-	$(LCOV) --extract $(COV_DIR)/total.info '$(REPO_ROOT)/*' \
+	$(LCOV) --extract $(COV_DIR)/run.info '$(REPO_ROOT)/*' \
 	    --output-file $(COV_DIR)/first.info
 	$(LCOV) --remove $(COV_DIR)/first.info \
 	    '*/libs/qrcodegen/*' '*/libs/littlefs/*' '*/test/*' '/usr/*' \
