@@ -7,7 +7,7 @@
 
 #define TOTP_STEP_SECONDS 30
 #define TOTP_DIGITS       6
-#define TOTP_WINDOW       1  // check T-1, T, T+1
+#define TOTP_WINDOW       1 // check T-1, T, T+1
 
 // Compute TOTP code for a given secret and unix timestamp step.
 // Returns 6-digit code.
