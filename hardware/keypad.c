@@ -2,8 +2,15 @@
 #include "pico/stdlib.h"
 #include "pico/time.h"
 
+// clang-format off
+// Kept as a 4x4 grid mirroring the physical keypad layout.
 static const char KEY_MAP[KEYPAD_ROWS][KEYPAD_COLS] = {
-    {'1', '2', '3', 'A'}, {'4', '5', '6', 'B'}, {'7', '8', '9', 'C'}, {'*', '0', '#', 'D'}};
+    {'1', '2', '3', 'A'},
+    {'4', '5', '6', 'B'},
+    {'7', '8', '9', 'C'},
+    {'*', '0', '#', 'D'}
+};
+// clang-format on
 
 void keypad_init(void) {
     // Rows: outputs, default HIGH
