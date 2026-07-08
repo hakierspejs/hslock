@@ -67,12 +67,20 @@ LCOV_IGNORE    := --ignore-errors unused,empty,mismatch,inconsistent,source,gcov
 GENHTML_IGNORE := --ignore-errors unused,empty,mismatch,inconsistent,source,negative
 LCOV           := lcov $(LCOV_RC) $(LCOV_IGNORE)
 
-.PHONY: all asan valgrind coverage clean
+.PHONY: all asan valgrind coverage clean check-submodules
 
 all: asan
 
+# Fail early with a clear message if the git submodules aren't checked out
+# (fresh clones have empty libs/qrcodegen and libs/littlefs).
+check-submodules:
+	@test -f $(QRCODEGEN)/qrcodegen.c && test -f $(ROOT)/libs/littlefs/lfs_util.h || { \
+	    echo "ERROR: git submodules not initialized (libs/qrcodegen and/or libs/littlefs are empty)." >&2; \
+	    echo "       run: git submodule update --init --recursive" >&2; \
+	    exit 1; }
+
 # --- ASan + UBSan -----------------------------------------------------------
-asan: $(BUILD)/asan_secret_qr $(BUILD)/asan_base64
+asan: check-submodules $(BUILD)/asan_secret_qr $(BUILD)/asan_base64
 	@echo "== running asan/ubsan harnesses =="
 	$(BUILD)/asan_secret_qr
 	$(BUILD)/asan_base64
@@ -85,7 +93,7 @@ $(BUILD)/asan_base64: $(BASE64_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(INCLUDES) $(BASE64_SRCS) -o $@
 
 # --- Valgrind ---------------------------------------------------------------
-valgrind: $(BUILD)/vg_secret_qr $(BUILD)/vg_base64
+valgrind: check-submodules $(BUILD)/vg_secret_qr $(BUILD)/vg_base64
 	@echo "== running harnesses under valgrind =="
 	valgrind --error-exitcode=99 --leak-check=full -q $(BUILD)/vg_secret_qr
 	valgrind --error-exitcode=99 --leak-check=full -q $(BUILD)/vg_base64
@@ -103,7 +111,7 @@ $(BUILD)/vg_base64: $(BASE64_SRCS) | $(BUILD)
 # the test harnesses themselves), and render coverage/html/ with branches.
 # The report covers exactly the modules the harnesses exercise (base32.c,
 # base64.c, random.c); HW-only firmware is not built host-side and is absent.
-coverage: | $(COV_DIR)/obj
+coverage: check-submodules | $(COV_DIR)/obj
 	@echo "== coverage: building + running harnesses =="
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(INCLUDES) $(SECRET_QR_SRCS) \
 	    -o $(COV_DIR)/obj/cov_secret_qr
