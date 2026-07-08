@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Project CI entrypoint. Default: fix formatting locally.
+# Use --action=check (dry-run, non-zero on diff) in a git hook / CI.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+check=lint action=fix
+for a in "$@"; do case $a in
+  --check=*)  check=${a#*=} ;;
+  --action=*) action=${a#*=} ;;
+  *) echo "usage: ./ci [--check=lint] [--action=fix|check]" >&2; exit 2 ;;
+esac; done
+
+srcs() { git ls-files '*.c' '*.h' ':!:libs/**' ':!:version.h'; }
+
+case $check.$action in
+  lint.fix)   srcs | xargs -r clang-format -i ;;
+  lint.check) srcs | xargs -r clang-format --dry-run --Werror ;;
+  *) echo "unknown --check=$check --action=$action" >&2; exit 2 ;;
+esac
