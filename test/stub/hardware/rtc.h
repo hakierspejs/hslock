@@ -14,6 +14,8 @@ typedef struct {
     int8_t  sec;
 } datetime_t;
 
+static inline void rtc_init(void) {
+}
 static inline bool rtc_get_datetime(datetime_t *t) {
     (void)t;
     return false;

@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 #
-# coverage-summary.sh - whole-codebase coverage summary + blind-spot list.
+# coverage-summary.sh - whole-codebase coverage summary.
+#
+# Every first-party firmware .c is compiled into the coverage build (the ones no
+# harness exercises are compiled to a .gcno only, so they show up at their true
+# 0% with full per-line detail). This means the lcov tracefile already covers
+# the WHOLE first-party codebase - there is no separate hand-maintained blind
+# spot list and no source-line approximation. All numbers below are derived
+# entirely from the lcov .info.
 #
 # Reads a filtered lcov .info tracefile and the full first-party source list
 # (git ls-files, minus third-party submodules and the test harnesses) and emits:
-#   - overall first-party line% and branch% (blind spots folded into the
-#     line denominator as 0%, denominator stated explicitly),
-#   - the list of 0%-coverage files,
-#   - files below 100% branch coverage, worst-first (searchable blind spots),
-#   - the explicit BLIND SPOTS list (non-host-compilable files + reason).
+#   - overall first-party line% and branch% (straight from lcov),
+#   - the list of 0%-coverage files (real: lines-hit == 0),
+#   - files below 100% branch coverage, worst-first (searchable weak spots).
 # Outputs summary.txt and summary.json into <out-dir>, and a summary.html that
 # is surfaced at the top of the genhtml report (linked from index.html).
 #
@@ -18,26 +23,6 @@ set -euo pipefail
 INFO=${1:?usage: coverage-summary.sh <coverage.info> <out-dir>}
 OUT=${2:?usage: coverage-summary.sh <coverage.info> <out-dir>}
 REPO=$(git -C .. rev-parse --show-toplevel)
-
-# --- explicit BLIND SPOTS: files that cannot be host-compiled (with reason) --
-# Keep in sync with test/Makefile COV_ZERO_SRCS commentary.
-BLIND_FILES=(network/ntp.c network/wifi.c storage/storage.c)
-blind_reason() {
-	case "$1" in
-	network/ntp.c) echo "needs pico/cyw43_arch.h + lwip/udp.h + lwip/dns.h (no host stack)" ;;
-	network/wifi.c) echo "needs pico/cyw43_arch.h (cyw43 driver, no host stack)" ;;
-	storage/storage.c) echo "needs pico/flash.h + hardware/flash.h/sync.h + littlefs block device" ;;
-	*) echo "non-host-compilable" ;;
-	esac
-}
-
-is_blind() {
-	local f
-	for f in "${BLIND_FILES[@]}"; do
-		[ "$f" = "$1" ] && return 0
-	done
-	return 1
-}
 
 # --- full first-party file list (denominator) -------------------------------
 mapfile -t FIRST_PARTY < <(
@@ -65,22 +50,6 @@ while IFS= read -r line; do
 	esac
 done <"$INFO"
 
-# --- approximate instrumentable line count for uncompiled (blind-spot) files -
-# Counts non-blank lines that are not pure comments or lone braces. Conservative
-# stand-in for gcov line count so blind spots weigh honestly in the denominator.
-approx_lines() {
-	local f=$1 n=0 t
-	while IFS= read -r t; do
-		t=${t#"${t%%[![:space:]]*}"} # strip leading whitespace
-		[ -z "$t" ] && continue
-		case "$t" in
-		'//'* | '/*'* | '*'* | '{' | '}' | '};') continue ;;
-		esac
-		n=$((n + 1))
-	done <"$REPO/$f"
-	echo "$n"
-}
-
 pct() { # hits found -> percentage string with one decimal
 	local h=$1 f=$2
 	if [ "$f" -eq 0 ]; then
@@ -90,40 +59,36 @@ pct() { # hits found -> percentage string with one decimal
 	fi
 }
 
-# --- aggregate --------------------------------------------------------------
+# --- aggregate (entirely from lcov data) ------------------------------------
 tot_lf=0 tot_lh=0 tot_brf=0 tot_brh=0
-n_files=0 n_zero=0 n_blind=0 n_measured=0 n_exercised=0
-zero_list=()   # "path" with 0% lines
-below_list=()  # "brpct|path|BRH|BRF" below 100% branch
+n_files=0 n_zero=0 n_measured=0 n_exercised=0 n_missing=0
+zero_list=()    # paths with 0% lines (real: lines-hit == 0)
+missing_list=() # first-party files absent from the lcov data (should be none)
+below_list=()   # "brpct|path|BRH|BRF" below 100% branch
 for f in "${FIRST_PARTY[@]}"; do
 	n_files=$((n_files + 1))
-	if [ -n "${LF[$f]+x}" ]; then
-		# measured by lcov
-		n_measured=$((n_measured + 1))
-		lf=${LF[$f]} lh=${LH[$f]} brf=${BRF[$f]} brh=${BRH[$f]}
-		tot_lf=$((tot_lf + lf))
-		tot_lh=$((tot_lh + lh))
-		tot_brf=$((tot_brf + brf))
-		tot_brh=$((tot_brh + brh))
-		if [ "$lh" -eq 0 ]; then
-			n_zero=$((n_zero + 1))
-			zero_list+=("$f")
-		else
-			n_exercised=$((n_exercised + 1))
-		fi
-		if [ "$brf" -gt 0 ] && [ "$brh" -lt "$brf" ]; then
-			p=$(awk -v h="$brh" -v f="$brf" 'BEGIN{printf "%07.3f",(h*100.0)/f}')
-			below_list+=("$p|$f|$brh|$brf")
-		fi
-	else
-		# not in lcov: blind spot (or otherwise uncompiled) -> 0% lines folded in
-		al=$(approx_lines "$f")
-		tot_lf=$((tot_lf + al))
+	if [ -z "${LF[$f]+x}" ]; then
+		# Not in lcov at all - this file failed to compile into the coverage
+		# build. Flagged (not approximated) so the gap is loud, never hidden.
+		n_missing=$((n_missing + 1))
+		missing_list+=("$f")
+		continue
+	fi
+	n_measured=$((n_measured + 1))
+	lf=${LF[$f]} lh=${LH[$f]} brf=${BRF[$f]} brh=${BRH[$f]}
+	tot_lf=$((tot_lf + lf))
+	tot_lh=$((tot_lh + lh))
+	tot_brf=$((tot_brf + brf))
+	tot_brh=$((tot_brh + brh))
+	if [ "$lh" -eq 0 ]; then
 		n_zero=$((n_zero + 1))
-		if is_blind "$f"; then
-			n_blind=$((n_blind + 1))
-		fi
-		zero_list+=("$f (0%, uncompiled ~${al} lines)")
+		zero_list+=("$f")
+	else
+		n_exercised=$((n_exercised + 1))
+	fi
+	if [ "$brf" -gt 0 ] && [ "$brh" -lt "$brf" ]; then
+		p=$(awk -v h="$brh" -v f="$brf" 'BEGIN{printf "%07.3f",(h*100.0)/f}')
+		below_list+=("$p|$f|$brh|$brf")
 	fi
 done
 
@@ -141,19 +106,19 @@ TXT="$OUT/summary.txt"
 	echo "============================"
 	echo
 	echo "First-party files (denominator): $n_files"
-	echo "  host-compiled into coverage build: $n_measured"
+	echo "  in coverage report (lcov):         $n_measured"
 	echo "  actually exercised (>0% lines):    $n_exercised"
-	echo "  0% coverage (untested + blind):    $n_zero"
-	echo "  non-host-compilable blind spots:   $n_blind"
+	echo "  compiled but not exercised (0%):   $n_zero"
+	if [ "$n_missing" -gt 0 ]; then
+		echo "  MISSING from coverage build:       $n_missing"
+	fi
 	echo
 	echo "Overall LINE coverage:   ${line_pct}%  (${tot_lh}/${tot_lf} lines)"
-	echo "  denominator folds blind-spot / uncompiled files in at 0%"
-	echo "  (their instrumentable lines are approximated from source)."
 	echo "Overall BRANCH coverage: ${br_pct}%  (${tot_brh}/${tot_brf} branches)"
-	echo "  branch denominator counts only host-compiled files; blind-spot"
-	echo "  branches are unmeasured (see the blind-spot list below)."
+	echo "  every first-party file is in the lcov data; these totals are the"
+	echo "  real instrumented-line / -branch counts, no approximation."
 	echo
-	echo "0%-COVERAGE FILES ($n_zero):"
+	echo "0%-COVERAGE FILES ($n_zero) - compiled for visibility, no harness yet:"
 	if [ ${#zero_list[@]} -eq 0 ]; then
 		echo "  (none)"
 	else
@@ -169,11 +134,11 @@ TXT="$OUT/summary.txt"
 			printf '  - %6.2f%%  %s  (%s/%s branches)\n' "$p" "$f" "$h" "$t"
 		done
 	fi
-	echo
-	echo "BLIND SPOTS (non-host-compilable, counted 0% in denominator):"
-	for f in "${BLIND_FILES[@]}"; do
-		printf '  - %s  -- %s\n' "$f" "$(blind_reason "$f")"
-	done
+	if [ "$n_missing" -gt 0 ]; then
+		echo
+		echo "FILES MISSING FROM COVERAGE BUILD ($n_missing) - failed to compile:"
+		printf '  - %s\n' "${missing_list[@]}"
+	fi
 } >"$TXT"
 
 # --- summary.json -----------------------------------------------------------
@@ -184,7 +149,7 @@ JSON="$OUT/summary.json"
 	printf '  "compiled_files": %s,\n' "$n_measured"
 	printf '  "exercised_files": %s,\n' "$n_exercised"
 	printf '  "zero_coverage_files": %s,\n' "$n_zero"
-	printf '  "blind_spot_files": %s,\n' "$n_blind"
+	printf '  "missing_files": %s,\n' "$n_missing"
 	printf '  "line_pct": "%s",\n' "$line_pct"
 	printf '  "lines_hit": %s,\n' "$tot_lh"
 	printf '  "lines_found": %s,\n' "$tot_lf"
@@ -198,10 +163,10 @@ JSON="$OUT/summary.json"
 		sep=", "
 	done
 	printf '],\n'
-	printf '  "blind_spots": ['
+	printf '  "missing_files_list": ['
 	sep=""
-	for f in "${BLIND_FILES[@]}"; do
-		printf '%s{"file": "%s", "reason": "%s"}' "$sep" "$f" "$(blind_reason "$f")"
+	for f in "${missing_list[@]}"; do
+		printf '%s"%s"' "$sep" "$f"
 		sep=", "
 	done
 	printf ']\n}\n'
@@ -224,11 +189,11 @@ if [ -d "$OUT/html" ]; then
 	# Prepend a prominent banner + summary link at the top of genhtml's index.
 	IDX="$OUT/html/index.html"
 	if [ -f "$IDX" ] && ! grep -q 'hslock-summary-banner' "$IDX"; then
-		banner='<div id="hslock-summary-banner" style="padding:10px;margin:0;background:#fffae6;border-bottom:2px solid #e0c000;font-family:monospace"><b>Whole-codebase coverage:</b> '"${line_pct}"'% lines, '"${br_pct}"'% branches over '"${n_files}"' first-party files ('"${n_zero}"' at 0%, '"${n_blind}"' non-host-compilable blind spots). &nbsp;<a href="summary.html">full summary &amp; blind-spot list &rarr;</a></div>'
+		banner='<div id="hslock-summary-banner" style="padding:10px;margin:0;background:#fffae6;border-bottom:2px solid #e0c000;font-family:monospace"><b>Whole-codebase coverage:</b> '"${line_pct}"'% lines, '"${br_pct}"'% branches over '"${n_files}"' first-party files ('"${n_zero}"' at 0%, all in the report). &nbsp;<a href="summary.html">full summary &rarr;</a></div>'
 		awk -v b="$banner" '/<body/ && !done {print; print b; done=1; next} {print}' "$IDX" >"$IDX.tmp" &&
 			mv "$IDX.tmp" "$IDX"
 	fi
 fi
 
 echo "summary written: $TXT, $JSON"
-echo "  line ${line_pct}% (${tot_lh}/${tot_lf}), branch ${br_pct}% (${tot_brh}/${tot_brf}), ${n_zero} zero-cov, ${n_blind} blind spots"
+echo "  line ${line_pct}% (${tot_lh}/${tot_lf}), branch ${br_pct}% (${tot_brh}/${tot_brf}), ${n_zero} zero-cov, ${n_missing} missing"

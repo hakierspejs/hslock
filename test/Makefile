@@ -46,27 +46,27 @@ SECRET_QR_SRCS := harness_secret_qr.c $(SHARED)/random.c $(BASE32)/base32.c \
 BASE64_SRCS    := harness_base64.c $(BASE64)/base64.c
 
 # ---------------------------------------------------------------------------
-# Whole-codebase coverage denominator (blind-spot visibility)
+# Whole-codebase coverage denominator (uniform 0% for every untested file)
 # ---------------------------------------------------------------------------
-# COV_ZERO_SRCS: first-party firmware .c files that COMPILE host-side with the
-# stubs above but are NOT exercised by any harness. Compiling them emits a
-# .gcno (but no .gcda), so lcov reports their true 0% coverage instead of
-# silently dropping them - blind spots stay visible in the report.
+# COV_ZERO_SRCS: EVERY first-party firmware .c not exercised by a harness.
+# All of them COMPILE host-side against the stubs in test/stub/ (including the
+# cyw43 / lwip / flash shims that let network/*.c and storage/storage.c build
+# without the real Pico SDK). Compiling emits a .gcno (but no .gcda), so lcov
+# reports each file's true 0% coverage with full per-line detail instead of
+# silently dropping it - so the report covers the WHOLE codebase uniformly,
+# with no separate hand-maintained "blind spot" list or line approximation.
 COV_ZERO_SRCS := $(ROOT)/hardware/buzzer.c $(ROOT)/hardware/clock.c \
                  $(ROOT)/hardware/keypad.c $(ROOT)/hardware/latch.c \
                  $(ROOT)/hardware/light.c $(ROOT)/main.c \
+                 $(ROOT)/network/ntp.c $(ROOT)/network/wifi.c \
                  $(ROOT)/serial/commands.c $(ROOT)/serial/commands_backup.c \
                  $(ROOT)/serial/commands_keys.c $(ROOT)/serial/commands_network.c \
                  $(ROOT)/serial/commands_system.c $(ROOT)/serial/console.c \
-                 $(ROOT)/storage/backup.c
-#
-# BLIND SPOTS - first-party files that CANNOT be host-compiled without heavy
-# mocks (real Pico SDK / cyw43 / lwip / littlefs block device). They are
-# enumerated (with reason) by coverage-summary.sh and counted as 0% toward the
-# whole-codebase denominator - never silently excluded:
-#   network/ntp.c    - pico/cyw43_arch.h + lwip/udp.h + lwip/dns.h
-#   network/wifi.c   - pico/cyw43_arch.h
-#   storage/storage.c- pico/flash.h + hardware/flash.h + hardware/sync.h + lfs cfg
+                 $(ROOT)/storage/backup.c $(ROOT)/storage/storage.c
+
+# LittleFS configuration mirrored from the firmware CMake build so storage.c
+# compiles against the real lfs.h/lfs_util.h the same way the RP2040 build does.
+COV_ZERO_DEFS := -DLFS_NO_MALLOC -DLFS_NO_DEBUG
 
 CC       := gcc
 CSTD     := -std=c11
@@ -122,8 +122,8 @@ $(BUILD)/vg_base64: $(BASE64_SRCS) | $(BUILD)
 
 # --- Coverage (whole-codebase denominator + lcov/genhtml HTML report) -------
 # 1. Build & run the real harnesses (produce .gcda -> true coverage).
-# 2. Compile every other host-compilable first-party .c (produce .gcno only
-#    -> true 0%), so untested files are visible as blind spots.
+# 2. Compile EVERY other first-party .c (produce .gcno only -> true 0%), so
+#    the report covers the whole codebase uniformly - no file is left out.
 # 3. lcov: --initial baseline (all .gcno at 0%) + post-run capture, combined,
 #    filtered to first-party only, rendered to coverage/html/ with branches.
 coverage: | $(COV_DIR)/obj
@@ -132,11 +132,11 @@ coverage: | $(COV_DIR)/obj
 	    -o $(COV_DIR)/obj/cov_secret_qr
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(INCLUDES) $(BASE64_SRCS) \
 	    -o $(COV_DIR)/obj/cov_base64
-	@echo "== coverage: compiling untested first-party files (0% blind spots) =="
+	@echo "== coverage: compiling every untested first-party file (true 0%) =="
 	@for f in $(COV_ZERO_SRCS); do \
 	    o=$(COV_DIR)/obj/zero_$$(basename $$f .c).o; \
 	    echo "  CC (gcno) $$f"; \
-	    $(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(INCLUDES) -c $$f -o $$o || exit 1; \
+	    $(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(COV_ZERO_DEFS) $(INCLUDES) -c $$f -o $$o || exit 1; \
 	done
 	@echo "== coverage: capturing initial (zero) baseline =="
 	$(LCOV) --capture --initial --directory $(COV_DIR)/obj \

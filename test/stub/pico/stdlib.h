@@ -10,6 +10,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "pico/time.h" /* sleep_ms / sleep_us / time_us_64 live here, as in the SDK */
+
 typedef unsigned int uint;
 
 #define GPIO_OUT           1
@@ -33,12 +35,6 @@ static inline int gpio_get(uint pin) {
 }
 static inline void gpio_pull_up(uint pin) {
     (void)pin;
-}
-static inline void sleep_ms(uint32_t ms) {
-    (void)ms;
-}
-static inline void sleep_us(uint64_t us) {
-    (void)us;
 }
 static inline void stdio_init_all(void) {
 }

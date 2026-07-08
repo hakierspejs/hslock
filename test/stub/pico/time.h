@@ -16,5 +16,14 @@ static inline bool time_reached(absolute_time_t t) {
     (void)t;
     return true;
 }
+static inline uint64_t time_us_64(void) {
+    return 0;
+}
+static inline void sleep_ms(uint32_t ms) {
+    (void)ms;
+}
+static inline void sleep_us(uint64_t us) {
+    (void)us;
+}
 
 #endif
