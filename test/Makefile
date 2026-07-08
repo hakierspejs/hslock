@@ -71,9 +71,17 @@ COV_FLAGS  := -g -O0 --coverage -fprofile-abs-path
 
 # lcov 2.x: enable branch coverage everywhere; tolerate the benign
 # inconsistencies host coverage of firmware naturally produces.
-LCOV_RC     := --rc branch_coverage=1
-LCOV_IGNORE := --ignore-errors unused,empty,mismatch,inconsistent,source,gcov,negative
-LCOV        := lcov $(LCOV_RC) $(LCOV_IGNORE)
+#
+# The valid --ignore-errors category set differs per sub-tool and per lcov
+# build: Ubuntu 24.04's lcov 2.0 genhtml rejects 'gcov'/'graph'/'range'
+# (there is no gcov phase in genhtml), while lcov/geninfo accept 'gcov' but
+# reject 'range'. So keep two lists: the capture/combine list (lcov+geninfo)
+# may carry 'gcov'; the genhtml list must not. Every category below exists in
+# lcov 2.0.0, so this is robust across lcov 1.x/2.x on Debian and Ubuntu.
+LCOV_RC        := --rc branch_coverage=1
+LCOV_IGNORE    := --ignore-errors unused,empty,mismatch,inconsistent,source,gcov,negative
+GENHTML_IGNORE := --ignore-errors unused,empty,mismatch,inconsistent,source,negative
+LCOV           := lcov $(LCOV_RC) $(LCOV_IGNORE)
 
 .PHONY: all asan valgrind coverage clean
 
@@ -141,7 +149,7 @@ coverage: | $(COV_DIR)/obj
 	    '*/libs/qrcodegen/*' '*/libs/littlefs/*' '*/test/*' '/usr/*' \
 	    --output-file $(COV_DIR)/coverage.info
 	@echo "== coverage: generating HTML report =="
-	genhtml $(LCOV_RC) $(LCOV_IGNORE) --branch-coverage \
+	genhtml $(LCOV_RC) $(GENHTML_IGNORE) --branch-coverage \
 	    --legend --title "hslock host coverage" \
 	    --output-directory $(COV_DIR)/html $(COV_DIR)/coverage.info
 	@echo "== coverage: generating summary (txt + json) =="
