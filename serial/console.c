@@ -9,7 +9,7 @@
 #define MAX_ARGS       8
 
 static char input_buf[INPUT_BUF_SIZE];
-static int  input_len    = 0;
+static int  input_len     = 0;
 static bool was_connected = false;
 
 static void print_prompt(void) {
@@ -27,14 +27,19 @@ static void process_line(void) {
     char *p    = input_buf;
 
     while (*p && argc < MAX_ARGS) {
-        while (*p == ' ') p++;   // skip whitespace
-        if (!*p) break;
+        while (*p == ' ')
+            p++; // skip whitespace
+        if (!*p)
+            break;
         argv[argc++] = p;
-        while (*p && *p != ' ') p++;  // find end of token
-        if (*p) *p++ = '\0';
+        while (*p && *p != ' ')
+            p++; // find end of token
+        if (*p)
+            *p++ = '\0';
     }
 
-    if (argc == 0) return;
+    if (argc == 0)
+        return;
 
     commands_dispatch(argc, argv);
 }
@@ -65,10 +70,12 @@ void console_task(void) {
         return;
     }
 
-    if (!connected) return;
+    if (!connected)
+        return;
 
     int c = getchar_timeout_us(0);
-    if (c == PICO_ERROR_TIMEOUT) return;
+    if (c == PICO_ERROR_TIMEOUT)
+        return;
 
     if (c == '\r' || c == '\n') {
         printf("\r\n");

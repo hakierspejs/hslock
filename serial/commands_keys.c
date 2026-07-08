@@ -13,7 +13,7 @@
 
 void cmd_list_keys(int argc, char **argv) {
     key_record_t keys[BACKUP_MAX_KEYS];
-    int count = storage_key_list(keys, BACKUP_MAX_KEYS);
+    int          count = storage_key_list(keys, BACKUP_MAX_KEYS);
 
     if (count < 0) {
         printf("error: failed to read keys\r\n");
@@ -26,8 +26,8 @@ void cmd_list_keys(int argc, char **argv) {
         return;
     }
 
-   printf("%-6s  %-2s  %-24s  %-7s  %-5s  %s\r\n",
-       "id", "ok", "name", "enabled", "admin", "created");
+    printf("%-6s  %-2s  %-24s  %-7s  %-5s  %s\r\n", "id", "ok", "name", "enabled", "admin",
+           "created");
     printf("------  --  ------------------------  -------  -----  -------------------\r\n");
 
     for (int i = 0; i < count; i++) {
@@ -35,18 +35,13 @@ void cmd_list_keys(int argc, char **argv) {
 
         char created[20] = "unknown";
         if (k->created_at > 0) {
-            time_t t = (time_t)k->created_at;
+            time_t     t  = (time_t)k->created_at;
             struct tm *tm = gmtime(&t);
             strftime(created, sizeof(created), "%Y-%m-%d %H:%M:%S", tm);
         }
 
-        printf("%-6u  %-2s  %-24s  %-7s  %-5s  %s\r\n",
-            k->id,
-            k->is_checksum_valid ? "v" : "x",
-            k->name,
-            k->is_enabled ? "yes" : "no",
-            k->is_admin   ? "yes" : "no",
-            created);
+        printf("%-6u  %-2s  %-24s  %-7s  %-5s  %s\r\n", k->id, k->is_checksum_valid ? "v" : "x",
+               k->name, k->is_enabled ? "yes" : "no", k->is_admin ? "yes" : "no", created);
     }
 
     printf("\r\n%d key(s)\r\n", count);
@@ -71,17 +66,17 @@ void cmd_get_key(int argc, char **argv) {
 
     char created[20] = "unknown";
     if (key.created_at > 0) {
-        time_t t = (time_t)key.created_at;
+        time_t     t  = (time_t)key.created_at;
         struct tm *tm = gmtime(&t);
         strftime(created, sizeof(created), "%Y-%m-%d %H:%M:%S", tm);
     }
 
-    printf("id:      %u\r\n",  key.id);
-    printf("ok:      %s\r\n",  key.is_checksum_valid   ? "v" : "x");
-    printf("name:    %s\r\n",  key.name);
-    printf("enabled: %s\r\n",  key.is_enabled ? "yes" : "no");
-    printf("admin:   %s\r\n",  key.is_admin   ? "yes" : "no");
-    printf("created: %s\r\n",  created);
+    printf("id:      %u\r\n", key.id);
+    printf("ok:      %s\r\n", key.is_checksum_valid ? "v" : "x");
+    printf("name:    %s\r\n", key.name);
+    printf("enabled: %s\r\n", key.is_enabled ? "yes" : "no");
+    printf("admin:   %s\r\n", key.is_admin ? "yes" : "no");
+    printf("created: %s\r\n", created);
     printf("secret:  ");
     for (int i = 0; i < KEY_SECRET_LEN; i++) {
         printf("%02X", key.secret[i]);
@@ -92,9 +87,9 @@ void cmd_get_key(int argc, char **argv) {
 }
 
 // Łódź URL-encoded: Ł=%C5%81, ó=%C3%B3, ź=%C5%BA, space=%20
-#define ISSUER_ENC "Hackerspejs%20%C5%81%C3%B3d%C5%BA"
-#define QR_BORDER       2  // quiet zone — required for scanners to work
-#define SECRET_B32_LEN  BASE32_ENCODED_LEN(KEY_SECRET_LEN)  // 33 bytes for 20-byte secret
+#define ISSUER_ENC     "Hackerspejs%20%C5%81%C3%B3d%C5%BA"
+#define QR_BORDER      2 // quiet zone — required for scanners to work
+#define SECRET_B32_LEN BASE32_ENCODED_LEN(KEY_SECRET_LEN) // 33 bytes for 20-byte secret
 
 void cmd_get_key_secret(int argc, char **argv) {
     uint16_t id = (uint16_t)strtoul(argv[1], NULL, 10);
@@ -124,9 +119,8 @@ void cmd_get_key_secret(int argc, char **argv) {
 
     // Build otpauth URI
     char uri[200];
-    snprintf(uri, sizeof(uri),
-        "otpauth://totp/%s:key%%20%u?secret=%s&issuer=%s&digits=6&period=30",
-        ISSUER_ENC, id, secret_b32, ISSUER_ENC);
+    snprintf(uri, sizeof(uri), "otpauth://totp/%s:key%%20%u?secret=%s&issuer=%s&digits=6&period=30",
+             ISSUER_ENC, id, secret_b32, ISSUER_ENC);
 
     printf("secret:  %s\r\n", secret_b32);
     printf("uri:     %s\r\n\r\n", uri);
@@ -135,12 +129,8 @@ void cmd_get_key_secret(int argc, char **argv) {
     static uint8_t qr[qrcodegen_BUFFER_LEN_MAX];
     static uint8_t tmp[qrcodegen_BUFFER_LEN_MAX];
 
-    bool ok = qrcodegen_encodeText(uri, tmp, qr,
-                                    qrcodegen_Ecc_MEDIUM,
-                                    qrcodegen_VERSION_MIN,
-                                    qrcodegen_VERSION_MAX,
-                                    qrcodegen_Mask_AUTO,
-                                    true);
+    bool ok = qrcodegen_encodeText(uri, tmp, qr, qrcodegen_Ecc_MEDIUM, qrcodegen_VERSION_MIN,
+                                   qrcodegen_VERSION_MAX, qrcodegen_Mask_AUTO, true);
     if (!ok) {
         printf("error: QR generation failed\r\n");
         buzzer_play_command_ack();
@@ -151,8 +141,7 @@ void cmd_get_key_secret(int argc, char **argv) {
     int size = qrcodegen_getSize(qr);
     for (int y = -QR_BORDER; y < size + QR_BORDER; y++) {
         for (int x = -QR_BORDER; x < size + QR_BORDER; x++) {
-            bool dark = (x >= 0 && y >= 0 && x < size && y < size)
-                     && qrcodegen_getModule(qr, x, y);
+            bool dark = (x >= 0 && y >= 0 && x < size && y < size) && qrcodegen_getModule(qr, x, y);
             printf(dark ? "##" : "  ");
         }
         printf("\r\n");
@@ -183,12 +172,12 @@ void cmd_add_key(int argc, char **argv) {
         return;
     }
 
-    key_record_t key = {0};
-    key.id         = id;
-    key.is_enabled = true;
-    key.is_admin   = false;
-    key.is_checksum_valid   = true;
-    key.created_at = clock_get_unix_time();
+    key_record_t key      = {0};
+    key.id                = id;
+    key.is_enabled        = true;
+    key.is_admin          = false;
+    key.is_checksum_valid = true;
+    key.created_at        = clock_get_unix_time();
     strncpy(key.name, argv[2], KEY_NAME_MAX - 1);
     generate_secret(key.secret);
 

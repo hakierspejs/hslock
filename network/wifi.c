@@ -15,8 +15,7 @@ bool wifi_connect(const char *ssid, const char *password) {
     }
 
     printf("[wifi] connecting to '%s'...\r\n", ssid);
-    int rc = cyw43_arch_wifi_connect_timeout_ms(
-        ssid, password, CYW43_AUTH_WPA2_AES_PSK, 15000);
+    int rc = cyw43_arch_wifi_connect_timeout_ms(ssid, password, CYW43_AUTH_WPA2_AES_PSK, 15000);
 
     if (rc) {
         printf("[wifi] connect failed: %d\r\n", rc);
@@ -28,6 +27,7 @@ bool wifi_connect(const char *ssid, const char *password) {
 }
 
 bool wifi_is_connected(void) {
-    if (!initialised) return false;
+    if (!initialised)
+        return false;
     return cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_UP;
 }

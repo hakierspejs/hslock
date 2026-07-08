@@ -31,7 +31,7 @@ void cmd_set_wifi(int argc, char **argv) {
         return;
     }
 
-    strncpy(cfg.ssid,     argv[1], WIFI_SSID_MAX - 1);
+    strncpy(cfg.ssid, argv[1], WIFI_SSID_MAX - 1);
     strncpy(cfg.password, argv[2], WIFI_PASSWORD_MAX - 1);
     cfg.ssid[WIFI_SSID_MAX - 1]         = '\0';
     cfg.password[WIFI_PASSWORD_MAX - 1] = '\0';

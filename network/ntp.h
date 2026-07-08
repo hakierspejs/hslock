@@ -4,10 +4,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define NTP_RESYNC_INTERVAL_S   (30 * 60)   // 30 minutes
-#define NTP_RETRY_INTERVAL_S    5           // retry on boot failure
-#define NTP_TIMEOUT_S           15          // per-sync timeout
-#define NTP_ROLLBACK_EPSILON_S  60          // max allowed backward correction
+#define NTP_RESYNC_INTERVAL_S  (30 * 60) // 30 minutes
+#define NTP_RETRY_INTERVAL_S   5         // retry on boot failure
+#define NTP_TIMEOUT_S          15        // per-sync timeout
+#define NTP_ROLLBACK_EPSILON_S 60        // max allowed backward correction
 
 // Call once after WiFi connected - initialises RTC
 void ntp_init(void);
