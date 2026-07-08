@@ -46,6 +46,11 @@ void buzzer_play_command_ack() {
     buzzer_beep_short();
 }
 
+void buzzer_play_auth_error() {
+    buzzer_beep_medium();
+    buzzer_beep_short();
+}
+
 void buzzer_play_ntp_sync_error() {
     buzzer_beep_short();
     buzzer_beep_medium();

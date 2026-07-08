@@ -5,11 +5,14 @@
 #include "hardware/light.h"
 #include "hardware/watchdog.h"
 #include "network/ntp.h"
+#include "storage/backup.h"
 #include "storage/storage.h"
+#include "shared/totp.h"
 #include "version.h"
 #include "pico/stdlib.h"
 #include <stdio.h>
 #include <time.h>
+#include <stdlib.h>
 
 void cmd_status(int argc, char **argv) {
     printf("mode:      %s\r\n", admin_mode ? "admin" : "user");
@@ -76,8 +79,70 @@ void cmd_test(int argc, char **argv) {
 }
 
 void cmd_login(int argc, char **argv) {
-    // TODO
-    printf("login: [stub] would verify OTP '%s' against admin keys\r\n", argv[1]);
+    uint16_t id   = (uint16_t)strtoul(argv[1], NULL, 10);
+    uint32_t code = (uint32_t)strtoul(argv[2], NULL, 10);
+ 
+    // Check if any admin keys exist
+    key_record_t keys[BACKUP_MAX_KEYS];
+    int count = storage_key_list(keys, BACKUP_MAX_KEYS);
+ 
+    bool any_admin = false;
+    for (int i = 0; i < count; i++) {
+        if (keys[i].is_admin && keys[i].is_enabled && keys[i].is_checksum_valid) {
+            any_admin = true;
+            break;
+        }
+    }
+
+    // No wifi configured — allow login (device needs to be set up)
+    wifi_config_t wifi;
+    if (!storage_wifi_get(&wifi)) {
+        printf("warning: wifi not configured — open mode\r\n");
+        admin_mode = true;
+        printf("login: admin mode enabled\r\n");
+        buzzer_beep_short();
+        return;
+    }
+
+    // RTC not initialised — NTP never synced
+    if (clock_get_unix_time() == 0) {
+        printf("warning: RTC not set — open mode\r\n");
+        admin_mode = true;
+        printf("login: admin mode enabled\r\n");
+        buzzer_beep_short();
+        return;
+    }
+ 
+    // No admin keys — allow any credentials (bootstrap mode)
+    if (!any_admin) {
+        printf("warning: no admin keys configured — bootstrap mode\r\n");
+        admin_mode = true;
+        printf("login: admin mode enabled\r\n");
+        buzzer_play_command_ack();
+        return;
+    }
+ 
+    // Load requested key
+    key_record_t key;
+    if (!storage_key_get(id, &key)) {
+        printf("error: invalid credentials\r\n");
+        buzzer_play_auth_error();
+        return;
+    }
+ 
+    if (!key.is_enabled || !key.is_admin || !key.is_checksum_valid) {
+        printf("error: invalid credentials\r\n");
+        buzzer_play_auth_error();
+        return;
+    }
+ 
+    // Verify TOTP
+    if (!totp_verify(key.secret, KEY_SECRET_LEN, code)) {
+        printf("error: invalid credentials\r\n");
+        buzzer_play_auth_error();
+        return;
+    }
+ 
     admin_mode = true;
     printf("login: admin mode enabled\r\n");
     buzzer_play_command_ack();

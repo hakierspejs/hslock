@@ -6,6 +6,8 @@ project(hslock_project C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
+set(MBEDTLS_CONFIG_FILE "mbedtls_config.h")
+
 pico_sdk_init()
 
 
@@ -101,6 +103,7 @@ target_include_directories(hslock PRIVATE
 
 target_link_libraries(hslock
     pico_stdlib
+    pico_mbedtls
     pico_multicore
     pico_flash       # flash_safe_execute
     pico_rand                       

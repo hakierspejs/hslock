@@ -2,19 +2,36 @@
 
 uint32_t clock_get_unix_time(void) {
     datetime_t dt;
-    if (!rtc_get_datetime(&dt))
-        return 0;
+    if (!rtc_get_datetime(&dt)) return 0;
 
-    struct tm t = {
-        .tm_year  = dt.year - 1900,
-        .tm_mon   = dt.month - 1,
-        .tm_mday  = dt.day,
-        .tm_hour  = dt.hour,
-        .tm_min   = dt.min,
-        .tm_sec   = dt.sec,
-        .tm_isdst = 0,
+    // Days per month (non-leap year)
+    static const int days_in_month[] = {
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
-    return (uint32_t)mktime(&t);
+
+    // Count days from 1970 to current date
+    uint32_t days = 0;
+
+    // Full years since 1970
+    for (int y = 1970; y < dt.year; y++) {
+        bool leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+        days += leap ? 366 : 365;
+    }
+
+    // Full months this year
+    bool this_leap = (dt.year % 4 == 0 && dt.year % 100 != 0) || (dt.year % 400 == 0);
+    for (int m = 1; m < dt.month; m++) {
+        days += days_in_month[m - 1];
+        if (m == 2 && this_leap) days++;
+    }
+
+    // Days this month (minus 1 since today isn't complete)
+    days += dt.day - 1;
+
+    return days * 86400
+         + dt.hour * 3600
+         + dt.min  * 60
+         + dt.sec;
 }
 
 void clock_set_from_unix_time(uint32_t unix_time) {
