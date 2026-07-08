@@ -9,8 +9,8 @@
 #include <stdint.h>
 
 // Auth modes.
-#define CYW43_AUTH_OPEN            0
-#define CYW43_AUTH_WPA2_AES_PSK    0x00400004
+#define CYW43_AUTH_OPEN         0
+#define CYW43_AUTH_WPA2_AES_PSK 0x00400004
 
 // Interface / link-status enums.
 #define CYW43_ITF_STA 0
