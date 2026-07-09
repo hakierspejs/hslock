@@ -5,7 +5,7 @@ name: pages
 # not entangle. The report is regenerated on every push to the branches below.
 on:
   push:
-    branches: [chore/host-tests-suite, chore/whole-coverage, master]
+    branches: [chore/host-tests-suite, master]
 
 # Least privilege for the Pages deployment via the job's OIDC token.
 permissions:
