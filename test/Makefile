@@ -45,6 +45,25 @@ SECRET_QR_SRCS := harness_secret_qr.c $(SHARED)/random.c $(BASE32)/base32.c \
                   $(QRCODEGEN)/qrcodegen.c
 BASE64_SRCS    := harness_base64.c $(BASE64)/base64.c
 
+# Whole-codebase coverage: EVERY first-party .c, so the report lists the whole
+# firmware (the harness-exercised modules at their real %, the rest at an honest
+# 0%). These are compiled instrumented but NOT linked or run — a .gcno alone is
+# enough for a file to appear in the report. The terse host stubs under stub/
+# stand in for the pico-sdk / cyw43 / lwip / mbedtls headers they pull.
+WHOLE_SRCS := $(ROOT)/hardware/buzzer.c $(ROOT)/hardware/clock.c \
+              $(ROOT)/hardware/keypad.c $(ROOT)/hardware/latch.c \
+              $(ROOT)/hardware/light.c $(ROOT)/main.c \
+              $(ROOT)/network/ntp.c $(ROOT)/network/wifi.c \
+              $(ROOT)/serial/commands.c $(ROOT)/serial/commands_backup.c \
+              $(ROOT)/serial/commands_keys.c $(ROOT)/serial/commands_network.c \
+              $(ROOT)/serial/commands_system.c $(ROOT)/serial/console.c \
+              $(ROOT)/shared/random.c $(ROOT)/shared/totp.c \
+              $(ROOT)/storage/backup.c $(ROOT)/storage/storage.c
+
+# LittleFS build knobs, mirrored from the top-level CMakeLists so storage.c and
+# backup.c see the same lfs.h / lfs_util.h configuration the firmware does.
+WHOLE_DEFS := -DLFS_NO_MALLOC -DLFS_NO_DEBUG
+
 CC       := gcc
 CSTD     := -std=c11
 WARN     := -Wall -Wextra
@@ -105,12 +124,15 @@ $(BUILD)/vg_secret_qr: $(SECRET_QR_SRCS) | $(BUILD)
 $(BUILD)/vg_base64: $(BASE64_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(INCLUDES) $(BASE64_SRCS) -o $@
 
-# --- Coverage (lcov/genhtml HTML report for the harness-exercised modules) --
-# Build & run the real harnesses with --coverage (producing .gcda), capture
-# the run data, filter to first-party sources (dropping the vendored libs and
-# the test harnesses themselves), and render coverage/html/ with branches.
-# The report covers exactly the modules the harnesses exercise (base32.c,
-# base64.c, random.c); HW-only firmware is not built host-side and is absent.
+# --- Coverage (lcov/genhtml HTML report for the WHOLE first-party codebase) --
+# Build & run the real harnesses with --coverage (producing .gcda), AND compile
+# every first-party .c instrumented but unlinked (compile-only, producing .gcno
+# only). A --initial capture turns the whole .gcno set into a 0% baseline; the
+# run capture carries the executed lines; merging the two yields a report that
+# spans the whole firmware — the harness-exercised modules (base32/base64/
+# random/...) at their real %, every other first-party file at an honest 0%.
+# Everything outside the first-party tree (vendored libs, the harnesses, /usr)
+# is filtered out.
 coverage: check-submodules | $(COV_DIR)/obj
 	@echo "== coverage: building + running harnesses =="
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(INCLUDES) $(SECRET_QR_SRCS) \
@@ -120,11 +142,23 @@ coverage: check-submodules | $(COV_DIR)/obj
 	@echo "== coverage: running instrumented harnesses =="
 	$(COV_DIR)/obj/cov_secret_qr
 	$(COV_DIR)/obj/cov_base64
-	@echo "== coverage: capturing run data =="
+	@echo "== coverage: compiling whole first-party codebase (compile-only) =="
+	@for src in $(WHOLE_SRCS); do \
+	    obj=$(COV_DIR)/obj/whole_$$(echo $$src | tr '/.' '__').o; \
+	    echo "  CC $$src"; \
+	    $(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(WHOLE_DEFS) $(INCLUDES) \
+	        -c $$src -o $$obj || exit 1; \
+	done
+	@echo "== coverage: capturing baseline (all .gcno at 0%) + run data =="
+	$(LCOV) --capture --initial --directory $(COV_DIR)/obj \
+	    --output-file $(COV_DIR)/baseline.info
 	$(LCOV) --capture --directory $(COV_DIR)/obj \
 	    --output-file $(COV_DIR)/run.info
+	$(LCOV) --add-tracefile $(COV_DIR)/baseline.info \
+	    --add-tracefile $(COV_DIR)/run.info \
+	    --output-file $(COV_DIR)/merged.info
 	@echo "== coverage: filtering to first-party sources =="
-	$(LCOV) --extract $(COV_DIR)/run.info '$(REPO_ROOT)/*' \
+	$(LCOV) --extract $(COV_DIR)/merged.info '$(REPO_ROOT)/*' \
 	    --output-file $(COV_DIR)/first.info
 	$(LCOV) --remove $(COV_DIR)/first.info \
 	    '*/libs/qrcodegen/*' '*/libs/littlefs/*' '*/test/*' '/usr/*' \
@@ -133,6 +167,8 @@ coverage: check-submodules | $(COV_DIR)/obj
 	genhtml $(LCOV_RC) $(GENHTML_IGNORE) --branch-coverage \
 	    --legend --title "hslock host coverage" \
 	    --output-directory $(COV_DIR)/html $(COV_DIR)/coverage.info
+	@echo "== coverage summary =="
+	$(LCOV) --summary $(COV_DIR)/coverage.info
 	@echo "== coverage OK: report at $(COV_DIR)/html/index.html =="
 
 $(BUILD):
