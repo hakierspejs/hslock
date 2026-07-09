@@ -45,6 +45,15 @@ SECRET_QR_SRCS := harness_secret_qr.c $(SHARED)/random.c $(BASE32)/base32.c \
                   $(QRCODEGEN)/qrcodegen.c
 BASE64_SRCS    := harness_base64.c $(BASE64)/base64.c
 
+# TOTP harness needs the REAL HMAC-SHA1, so it builds against the system mbedtls
+# (libmbedtls-dev) rather than the compile-only stub/mbedtls/md.h. `-idirafter
+# stub` keeps the hardware/rtc.h stub reachable while letting the real
+# <mbedtls/md.h> (a system dir) win the search for totp.c's HMAC include.
+# CI: the test job must apt-install `libmbedtls-dev` for this to build.
+TOTP_SRCS     := harness_totp.c $(SHARED)/totp.c
+TOTP_INCLUDES := -I$(ROOT) -I$(ROOT)/hardware -I$(SHARED) -idirafter stub
+TOTP_LIBS     := -lmbedcrypto
+
 # Whole-codebase coverage: EVERY first-party .c, so the report lists the whole
 # firmware (the harness-exercised modules at their real %, the rest at an honest
 # 0%). These are compiled instrumented but NOT linked or run — a .gcno alone is
@@ -99,10 +108,11 @@ check-submodules:
 	    exit 1; }
 
 # --- ASan + UBSan -----------------------------------------------------------
-asan: check-submodules $(BUILD)/asan_secret_qr $(BUILD)/asan_base64
+asan: check-submodules $(BUILD)/asan_secret_qr $(BUILD)/asan_base64 $(BUILD)/asan_totp
 	@echo "== running asan/ubsan harnesses =="
 	$(BUILD)/asan_secret_qr
 	$(BUILD)/asan_base64
+	$(BUILD)/asan_totp
 	@echo "== asan OK =="
 
 $(BUILD)/asan_secret_qr: $(SECRET_QR_SRCS) | $(BUILD)
@@ -111,11 +121,15 @@ $(BUILD)/asan_secret_qr: $(SECRET_QR_SRCS) | $(BUILD)
 $(BUILD)/asan_base64: $(BASE64_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(INCLUDES) $(BASE64_SRCS) -o $@
 
+$(BUILD)/asan_totp: $(TOTP_SRCS) | $(BUILD)
+	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(TOTP_INCLUDES) $(TOTP_SRCS) $(TOTP_LIBS) -o $@
+
 # --- Valgrind ---------------------------------------------------------------
-valgrind: check-submodules $(BUILD)/vg_secret_qr $(BUILD)/vg_base64
+valgrind: check-submodules $(BUILD)/vg_secret_qr $(BUILD)/vg_base64 $(BUILD)/vg_totp
 	@echo "== running harnesses under valgrind =="
 	valgrind --error-exitcode=99 --leak-check=full -q $(BUILD)/vg_secret_qr
 	valgrind --error-exitcode=99 --leak-check=full -q $(BUILD)/vg_base64
+	valgrind --error-exitcode=99 --leak-check=full -q $(BUILD)/vg_totp
 	@echo "== valgrind OK =="
 
 $(BUILD)/vg_secret_qr: $(SECRET_QR_SRCS) | $(BUILD)
@@ -123,6 +137,9 @@ $(BUILD)/vg_secret_qr: $(SECRET_QR_SRCS) | $(BUILD)
 
 $(BUILD)/vg_base64: $(BASE64_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(INCLUDES) $(BASE64_SRCS) -o $@
+
+$(BUILD)/vg_totp: $(TOTP_SRCS) | $(BUILD)
+	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(TOTP_INCLUDES) $(TOTP_SRCS) $(TOTP_LIBS) -o $@
 
 # --- Coverage (lcov/genhtml HTML report for the WHOLE first-party codebase) --
 # Build & run the real harnesses with --coverage (producing .gcda), AND compile
@@ -139,9 +156,12 @@ coverage: check-submodules | $(COV_DIR)/obj
 	    -o $(COV_DIR)/obj/cov_secret_qr
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(INCLUDES) $(BASE64_SRCS) \
 	    -o $(COV_DIR)/obj/cov_base64
+	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(TOTP_INCLUDES) $(TOTP_SRCS) $(TOTP_LIBS) \
+	    -o $(COV_DIR)/obj/cov_totp
 	@echo "== coverage: running instrumented harnesses =="
 	$(COV_DIR)/obj/cov_secret_qr
 	$(COV_DIR)/obj/cov_base64
+	$(COV_DIR)/obj/cov_totp
 	@echo "== coverage: compiling whole first-party codebase (compile-only) =="
 	@for src in $(WHOLE_SRCS); do \
 	    obj=$(COV_DIR)/obj/whole_$$(echo $$src | tr '/.' '__').o; \
