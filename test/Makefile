@@ -62,6 +62,13 @@ STORAGE_SRCS := harness_storage.c $(ROOT)/storage/storage.c $(ROOT)/storage/back
                 $(ROOT)/libs/littlefs/lfs.c $(ROOT)/libs/littlefs/lfs_util.c
 STORAGE_DEFS := -DLFS_NO_MALLOC -DLFS_NO_DEBUG
 
+# Commands harness: links serial/commands.c (the dispatcher) against SPY handler
+# stubs + a stub buzzer, all inside harness_commands.c. No real key/system/
+# network/backup handlers are pulled in — the harness drives commands_dispatch()
+# and asserts routing / admin gating / argc validation / unknown handling. The
+# shared INCLUDES resolve stub/pico + hardware/buzzer.h.
+COMMANDS_SRCS := harness_commands.c $(ROOT)/serial/commands.c
+
 # Whole-codebase coverage: EVERY first-party .c, so the report lists the whole
 # firmware (the harness-exercised modules at their real %, the rest at an honest
 # 0%). These are compiled instrumented but NOT linked or run — a .gcno alone is
@@ -117,12 +124,13 @@ check-submodules:
 
 # --- ASan + UBSan -----------------------------------------------------------
 asan: check-submodules $(BUILD)/asan_secret_qr $(BUILD)/asan_base64 $(BUILD)/asan_totp \
-      $(BUILD)/asan_storage
+      $(BUILD)/asan_storage $(BUILD)/asan_commands
 	@echo "== running asan/ubsan harnesses =="
 	$(BUILD)/asan_secret_qr
 	$(BUILD)/asan_base64
 	$(BUILD)/asan_totp
 	$(BUILD)/asan_storage
+	$(BUILD)/asan_commands
 	@echo "== asan OK =="
 
 $(BUILD)/asan_secret_qr: $(SECRET_QR_SRCS) | $(BUILD)
@@ -137,14 +145,18 @@ $(BUILD)/asan_totp: $(TOTP_SRCS) | $(BUILD)
 $(BUILD)/asan_storage: $(STORAGE_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(STORAGE_DEFS) $(INCLUDES) $(STORAGE_SRCS) -o $@
 
+$(BUILD)/asan_commands: $(COMMANDS_SRCS) | $(BUILD)
+	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(INCLUDES) $(COMMANDS_SRCS) -o $@
+
 # --- Valgrind ---------------------------------------------------------------
 valgrind: check-submodules $(BUILD)/vg_secret_qr $(BUILD)/vg_base64 $(BUILD)/vg_totp \
-          $(BUILD)/vg_storage
+          $(BUILD)/vg_storage $(BUILD)/vg_commands
 	@echo "== running harnesses under valgrind =="
 	valgrind --error-exitcode=99 --leak-check=full -q $(BUILD)/vg_secret_qr
 	valgrind --error-exitcode=99 --leak-check=full -q $(BUILD)/vg_base64
 	valgrind --error-exitcode=99 --leak-check=full -q $(BUILD)/vg_totp
 	valgrind --error-exitcode=99 --leak-check=full -q $(BUILD)/vg_storage
+	valgrind --error-exitcode=99 --leak-check=full -q $(BUILD)/vg_commands
 	@echo "== valgrind OK =="
 
 $(BUILD)/vg_secret_qr: $(SECRET_QR_SRCS) | $(BUILD)
@@ -158,6 +170,9 @@ $(BUILD)/vg_totp: $(TOTP_SRCS) | $(BUILD)
 
 $(BUILD)/vg_storage: $(STORAGE_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(STORAGE_DEFS) $(INCLUDES) $(STORAGE_SRCS) -o $@
+
+$(BUILD)/vg_commands: $(COMMANDS_SRCS) | $(BUILD)
+	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(INCLUDES) $(COMMANDS_SRCS) -o $@
 
 # --- Coverage (lcov/genhtml HTML report for the WHOLE first-party codebase) --
 # Build & run the real harnesses with --coverage (producing .gcda), AND compile
@@ -178,11 +193,14 @@ coverage: check-submodules | $(COV_DIR)/obj
 	    -o $(COV_DIR)/obj/cov_totp
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(STORAGE_DEFS) $(INCLUDES) $(STORAGE_SRCS) \
 	    -o $(COV_DIR)/obj/cov_storage
+	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(INCLUDES) $(COMMANDS_SRCS) \
+	    -o $(COV_DIR)/obj/cov_commands
 	@echo "== coverage: running instrumented harnesses =="
 	$(COV_DIR)/obj/cov_secret_qr
 	$(COV_DIR)/obj/cov_base64
 	$(COV_DIR)/obj/cov_totp
 	$(COV_DIR)/obj/cov_storage
+	$(COV_DIR)/obj/cov_commands
 	@echo "== coverage: compiling whole first-party codebase (compile-only) =="
 	@for src in $(WHOLE_SRCS); do \
 	    obj=$(COV_DIR)/obj/whole_$$(echo $$src | tr '/.' '__').o; \
