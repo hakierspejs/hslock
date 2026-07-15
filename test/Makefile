@@ -76,7 +76,7 @@ COMMANDS_SRCS := harness_commands.c $(ROOT)/serial/commands.c
 # stand in for the pico-sdk / cyw43 / lwip / mbedtls headers they pull.
 WHOLE_SRCS := $(ROOT)/hardware/buzzer.c $(ROOT)/hardware/clock.c \
               $(ROOT)/hardware/keypad.c $(ROOT)/hardware/latch.c \
-              $(ROOT)/hardware/light.c $(ROOT)/main.c \
+              $(ROOT)/hardware/led.c $(ROOT)/hardware/light.c $(ROOT)/main.c \
               $(ROOT)/network/ntp.c $(ROOT)/network/wifi.c \
               $(ROOT)/serial/commands.c $(ROOT)/serial/commands_backup.c \
               $(ROOT)/serial/commands_keys.c $(ROOT)/serial/commands_network.c \
