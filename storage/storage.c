@@ -152,12 +152,16 @@ static const struct lfs_config LFS_CFG = {
     .erase = flash_erase,
     .sync  = flash_sync,
 
-    .read_size      = LFS_READ_SIZE,
-    .prog_size      = LFS_PROG_SIZE,
-    .block_size     = LFS_BLOCK_SIZE,
-    .block_count    = LFS_BLOCK_COUNT,
-    .cache_size     = LFS_CACHE_SIZE,
-    .lookahead_size = LFS_LOOKAHEAD,
+    .read_size   = LFS_READ_SIZE,
+    .prog_size   = LFS_PROG_SIZE,
+    .block_size  = LFS_BLOCK_SIZE,
+    .block_count = LFS_BLOCK_COUNT,
+    .cache_size  = LFS_CACHE_SIZE,
+    // lookahead_size is in BYTES (littlefs tracks 8 blocks per byte and memsets
+    // this many bytes into lookahead_buffer). It must equal the buffer size, so
+    // derive it from the buffer to keep the two in lockstep; LFS_LOOKAHEAD/8 = 8
+    // bytes tracks all 64 blocks in one pass.
+    .lookahead_size = sizeof(lfs_lookahead_buf),
     .block_cycles   = 500, // wear leveling hint
 
     .read_buffer      = lfs_read_buf,
