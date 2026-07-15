@@ -39,7 +39,6 @@ void buzzer_beep_long() {
 void buzzer_play_boot() {
     buzzer_beep_short();
     buzzer_beep_short();
-    buzzer_beep_short();
 }
 
 void buzzer_play_command_ack() {
