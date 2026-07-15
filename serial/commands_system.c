@@ -3,6 +3,7 @@
 #include "hardware/clock.h"
 #include "hardware/latch.h"
 #include "hardware/light.h"
+#include "hardware/led.h"
 #include "hardware/watchdog.h"
 #include "network/ntp.h"
 #include "storage/backup.h"
@@ -11,6 +12,7 @@
 #include "version.h"
 #include "pico/stdlib.h"
 #include "pico/time.h"
+#include "pico/unique_id.h"
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
@@ -19,26 +21,53 @@
 #define BOOT_BYPASS_WINDOW_US (5ULL * 60 * 1000000)
 
 void cmd_status(int argc, char **argv) {
+    // Mode + build
     printf("mode:      %s\r\n", admin_mode ? "admin" : "user");
-    printf("build:     %s %s %s\r\n", GIT_HASH, GIT_DIRTY ? "[with changes]" : "", BUILD_DATE);
+    printf("build:     %s %s %s\r\n", GIT_HASH, BUILD_DATE, GIT_DIRTY ? " [DIRTY]" : "");
 
+    // Uptime
+    uint64_t up_s = time_us_64() / 1000000ULL;
+    printf("uptime:    %lluh %llum %llus\r\n", up_s / 3600, (up_s % 3600) / 60, up_s % 60);
+
+    // Board ID
+    pico_unique_board_id_t board_id;
+    pico_get_unique_board_id(&board_id);
+    printf("board id:  ");
+    for (int i = 0; i < PICO_UNIQUE_BOARD_ID_SIZE_BYTES; i++) {
+        printf("%02X", board_id.id[i]);
+    }
+    printf("\r\n");
+
+    // WiFi
     wifi_config_t wifi;
     if (storage_wifi_get(&wifi)) {
-        printf("wifi:      ssid=%s\r\n", wifi.ssid);
+        printf("wifi:      %s\r\n", wifi.ssid);
     } else {
         printf("wifi:      not configured\r\n");
     }
 
-    uint32_t last = ntp_last_sync_time();
-    if (last > 0) {
-        time_t     lt  = (time_t)last;
-        struct tm *ltm = gmtime(&lt);
-        char       lbuf[20];
-        strftime(lbuf, sizeof(lbuf), "%Y-%m-%d %H:%M:%S", ltm);
-        printf("last sync: %s UTC\r\n", lbuf);
+    // NTP
+    if (ntp_is_synced()) {
+        time_t     t  = (time_t)ntp_last_sync_time();
+        struct tm *tm = gmtime(&t);
+        char       buf[20];
+        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
+        printf("ntp:       synced, last sync %s UTC\r\n", buf);
     } else {
-        printf("last sync: never\r\n");
+        printf("ntp:       not synced\r\n");
     }
+
+    // Keys
+    key_record_t keys[BACKUP_MAX_KEYS];
+    int          count   = storage_key_list(keys, BACKUP_MAX_KEYS);
+    int          enabled = 0, corrupt = 0;
+    for (int i = 0; i < count; i++) {
+        if (!keys[i].is_checksum_valid)
+            corrupt++;
+        else if (keys[i].is_enabled)
+            enabled++;
+    }
+    printf("keys:      %d total, %d enabled, %d corrupt\r\n", count, enabled, corrupt);
 
     buzzer_play_command_ack();
 }
@@ -73,13 +102,14 @@ void cmd_get_time(int argc, char **argv) {
 }
 
 void cmd_test(int argc, char **argv) {
-    for (int i = 0; i < 3; i++) {
-        buzzer_play_command_ack();
-    }
     light_on();
+    led_on();
     sleep_ms(1000);
+    led_off();
     light_off();
     latch_open();
+
+    buzzer_play_command_ack();
 }
 
 void cmd_login(int argc, char **argv) {
