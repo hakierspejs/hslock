@@ -1,5 +1,10 @@
 # HSLock
 
+![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20Pico%20W-red)
+![Language](https://img.shields.io/badge/language-C-blue)
+![Build](https://github.com//hakierspejs/hslock/actions/workflows/ci.yml/badge.svg)
+![Build](https://github.com//hakierspejs/hslock/actions/workflows/test.yml/badge.svg)
+
 ## Building
 
 ```bash
