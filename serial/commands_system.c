@@ -10,9 +10,13 @@
 #include "shared/totp.h"
 #include "version.h"
 #include "pico/stdlib.h"
+#include "pico/time.h"
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
+
+// if RTC for some reason fails to initialise, allow login after 5 minutes
+#define BOOT_BYPASS_WINDOW_US (5ULL * 60 * 1000000)
 
 void cmd_status(int argc, char **argv) {
     printf("mode:      %s\r\n", admin_mode ? "admin" : "user");
@@ -100,16 +104,23 @@ void cmd_login(int argc, char **argv) {
         printf("warning: wifi not configured — open mode\r\n");
         admin_mode = true;
         printf("login: admin mode enabled\r\n");
-        buzzer_beep_short();
+        buzzer_play_command_ack();
         return;
     }
 
     // RTC not initialised — NTP never synced
     if (clock_get_unix_time() == 0) {
-        printf("warning: RTC not set — open mode\r\n");
-        admin_mode = true;
-        printf("login: admin mode enabled\r\n");
-        buzzer_beep_short();
+        if (time_us_64() >= BOOT_BYPASS_WINDOW_US) {
+            printf("warning: RTC not set — open mode\r\n");
+            admin_mode = true;
+            printf("login: admin mode enabled\r\n");
+            buzzer_play_command_ack();
+        } else {
+            uint64_t remaining_us = BOOT_BYPASS_WINDOW_US - time_us_64();
+            uint32_t remaining_s  = (uint32_t)(remaining_us / 1000000ULL);
+            printf("error: RTC not set, try again in %us\r\n", remaining_s);
+            buzzer_play_auth_error();
+        }
         return;
     }
 

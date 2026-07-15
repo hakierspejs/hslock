@@ -7,6 +7,7 @@
 #include "hardware/keypad.h"
 #include "hardware/latch.h"
 #include "hardware/light.h"
+#include "hardware/led.h"
 
 #include "network/wifi.h"
 #include "network/ntp.h"
@@ -68,6 +69,7 @@ int main(void) {
     buzzer_init();
     latch_init();
     light_init();
+    led_init();
 
     buzzer_beep_short();
 
@@ -80,8 +82,7 @@ int main(void) {
     boot_network();
 
     // Startup beep - signals boot completed
-    buzzer_beep_short();
-    buzzer_beep_short();
+    buzzer_play_boot();
 
     console_init();
 
