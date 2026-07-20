@@ -40,6 +40,14 @@
 " 256 "
 "123456"
 
+# --- key-command arg shapes: error branches (id-out-of-range, nonexistent id,
+#     over-length name) so mutation can splice them onto any key handler ---
+" 300 "
+" 200 "
+"add-key 300 x\x0a"
+"delete-key 200\x0a"
+" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
+
 # --- backup blob magic / base64 prefix (storage/backup.h BACKUP_MAGIC) ---
 "HSLL"
 "SFNMTA"
