@@ -137,13 +137,20 @@ void pico_get_unique_board_id(pico_unique_board_id_t *id_out) {
         id_out->id[i] = (uint8_t)(0xA0 + i);
 }
 
-/* Deterministic RNG so add-key secret generation is reproducible. */
+/* Deterministic RNG so add-key secret generation is reproducible. The state is
+ * reset to a fixed seed at the start of every run (see LLVMFuzzerTestOneInput),
+ * so the FIRST add-key in a run always generates the SAME secret regardless of
+ * how many keys earlier corpus entries generated. That determinism lets a seed
+ * carry the precomputed valid TOTP code and reach cmd_login's admin-success
+ * tail (the RNG_SEED / login-accept path). */
+#define RNG_SEED 0x9E3779B97F4A7C15ULL
+static uint64_t g_rng_state = RNG_SEED;
+
 uint64_t get_rand_64(void) {
-    static uint64_t s = 0x9E3779B97F4A7C15ULL;
-    s ^= s << 13;
-    s ^= s >> 7;
-    s ^= s << 17;
-    return s;
+    g_rng_state ^= g_rng_state << 13;
+    g_rng_state ^= g_rng_state >> 7;
+    g_rng_state ^= g_rng_state << 17;
+    return g_rng_state;
 }
 
 /* cmd_reboot calls watchdog_reboot() then spins in an infinite tight loop.
@@ -189,7 +196,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     flash_ram_reset();
     if (!storage_init())
         return 0; /* format/mount failure is not an input-driven bug */
-    admin_mode = false;
+    admin_mode  = false;
+    g_rng_state = RNG_SEED; /* first add-key of each run => fixed secret */
 
     g_data      = data;
     g_size      = size;

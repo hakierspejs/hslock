@@ -110,7 +110,7 @@ LCOV_IGNORE    := --ignore-errors unused,empty,mismatch,inconsistent,source,gcov
 GENHTML_IGNORE := --ignore-errors unused,empty,mismatch,inconsistent,source,negative
 LCOV           := lcov $(LCOV_RC) $(LCOV_IGNORE)
 
-.PHONY: all asan valgrind coverage fuzz fuzz-run fuzz-backup-run fuzz-cov clean check-submodules
+.PHONY: all asan valgrind coverage fuzz fuzz-run fuzz-backup-run fuzz-totp-run fuzz-cov clean check-submodules
 
 all: asan
 
@@ -272,14 +272,29 @@ FUZZ_BACKUP_SRCS   := fuzz_backup.c \
                       $(ROOT)/storage/storage.c $(ROOT)/storage/backup.c \
                       $(ROOT)/libs/littlefs/lfs.c $(ROOT)/libs/littlefs/lfs_util.c
 
-# Build both fuzzers.
-fuzz: check-submodules $(FUZZ_BIN) $(FUZZ_BACKUP_BIN)
+# Direct totp_verify() harness: fuzz bytes are interpreted as a (time, secret)
+# pair and totp.c is driven directly, so the ACCEPT branch of totp_verify (a
+# valid in-window code -> return true) runs every replay — unreachable via the
+# console fuzzer, whose RNG-generated secret makes a random code never match.
+# Built against the REAL mbedtls (system libmbedcrypto), like the asan_totp
+# harness; -idirafter stub keeps the <mbedtls/md.h> system header winning.
+FUZZ_TOTP_BIN      := $(BUILD)/fuzz_totp
+FUZZ_TOTP_CORPUS   := fuzz_totp_corpus
+FUZZ_TOTP_SRCS     := fuzz_totp.c $(SHARED)/totp.c
+FUZZ_TOTP_INCLUDES := -I$(ROOT) -I$(ROOT)/hardware -I$(SHARED) -idirafter stub
+FUZZ_TOTP_LIBS     := -lmbedcrypto
+
+# Build all fuzzers.
+fuzz: check-submodules $(FUZZ_BIN) $(FUZZ_BACKUP_BIN) $(FUZZ_TOTP_BIN)
 
 $(FUZZ_BIN): $(FUZZ_SRCS) | $(BUILD)
 	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_DEFS) $(FUZZ_INCLUDES) $(FUZZ_SRCS) $(FUZZ_LIBS) -o $@
 
 $(FUZZ_BACKUP_BIN): $(FUZZ_BACKUP_SRCS) | $(BUILD)
 	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_DEFS) $(FUZZ_INCLUDES) $(FUZZ_BACKUP_SRCS) -o $@
+
+$(FUZZ_TOTP_BIN): $(FUZZ_TOTP_SRCS) | $(BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_TOTP_INCLUDES) $(FUZZ_TOTP_SRCS) $(FUZZ_TOTP_LIBS) -o $@
 
 # Build + run short bounded campaigns from the seed corpora. The console run is
 # fed the keyword dictionary so mutation can splice real commands together.
@@ -293,6 +308,11 @@ fuzz-backup-run: $(FUZZ_BACKUP_BIN)
 	@echo "== fuzzing backup_import for $(FUZZ_TIME)s =="
 	$(FUZZ_BACKUP_BIN) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
 	    $(FUZZ_BACKUP_CORPUS)
+
+fuzz-totp-run: $(FUZZ_TOTP_BIN)
+	@echo "== fuzzing totp_verify for $(FUZZ_TIME)s =="
+	$(FUZZ_TOTP_BIN) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
+	    $(FUZZ_TOTP_CORPUS)
 
 # --- Fuzzer coverage of the parse/logic surface ----------------------------
 # REPEATABLE measurement of how much of the fuzzable surface the committed
@@ -324,9 +344,12 @@ fuzz-cov: check-submodules | $(FUZZ_COV_OBJ)
 	    $(FUZZ_SRCS) fuzz_replay.c $(FUZZ_LIBS) -o $(FUZZ_COV_OBJ)/cov_console
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(FUZZ_DEFS) -DFUZZ_REPLAY $(FUZZ_INCLUDES) \
 	    $(FUZZ_BACKUP_SRCS) fuzz_replay.c -o $(FUZZ_COV_OBJ)/cov_backup
+	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) -DFUZZ_REPLAY $(FUZZ_TOTP_INCLUDES) \
+	    $(FUZZ_TOTP_SRCS) fuzz_replay.c $(FUZZ_TOTP_LIBS) -o $(FUZZ_COV_OBJ)/cov_totp
 	@echo "== fuzz-cov: replaying corpora =="
 	$(FUZZ_COV_OBJ)/cov_console $(FUZZ_CORPUS)
 	$(FUZZ_COV_OBJ)/cov_backup $(FUZZ_BACKUP_CORPUS)
+	$(FUZZ_COV_OBJ)/cov_totp $(FUZZ_TOTP_CORPUS)
 	@echo "== fuzz-cov: capturing + merging coverage =="
 	$(FCOV_LCOV) --capture --initial --directory $(FUZZ_COV_OBJ) \
 	    --output-file $(COV_DIR)/fuzz-base.info
