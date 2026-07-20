@@ -110,7 +110,7 @@ LCOV_IGNORE    := --ignore-errors unused,empty,mismatch,inconsistent,source,gcov
 GENHTML_IGNORE := --ignore-errors unused,empty,mismatch,inconsistent,source,negative
 LCOV           := lcov $(LCOV_RC) $(LCOV_IGNORE)
 
-.PHONY: all asan valgrind coverage fuzz fuzz-run fuzz-backup-run fuzz-totp-run fuzz-cov clean check-submodules
+.PHONY: all asan valgrind coverage fuzz fuzz-run fuzz-backup-run fuzz-totp-run fuzz-cov gen-backup-seeds clean check-submodules
 
 all: asan
 
@@ -313,6 +313,21 @@ fuzz-totp-run: $(FUZZ_TOTP_BIN)
 	@echo "== fuzzing totp_verify for $(FUZZ_TIME)s =="
 	$(FUZZ_TOTP_BIN) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
 	    $(FUZZ_TOTP_CORPUS)
+
+# --- Curated backup_import() seed generator ---------------------------------
+# Regenerates the committed fuzz_backup_corpus/ blobs: one per backup_import
+# validation/write branch, with the VALID cases carrying a real CRC computed by
+# the firmware's own lfs_crc (linked from libs/littlefs/lfs_util.c). Run after
+# changing the wire format or the curated set. See test/gen_backup_seeds.c.
+GEN_BACKUP_BIN  := $(BUILD)/gen_backup_seeds
+GEN_BACKUP_SRCS := gen_backup_seeds.c $(ROOT)/libs/littlefs/lfs_util.c
+
+$(GEN_BACKUP_BIN): $(GEN_BACKUP_SRCS) | $(BUILD)
+	$(CC) $(CSTD) $(WARN) -g -O1 $(WHOLE_DEFS) $(INCLUDES) $(GEN_BACKUP_SRCS) -o $@
+
+gen-backup-seeds: $(GEN_BACKUP_BIN)
+	@echo "== regenerating curated backup_import seed corpus =="
+	$(GEN_BACKUP_BIN) $(FUZZ_BACKUP_CORPUS)
 
 # --- Fuzzer coverage of the parse/logic surface ----------------------------
 # REPEATABLE measurement of how much of the fuzzable surface the committed
