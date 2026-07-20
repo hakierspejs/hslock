@@ -110,7 +110,7 @@ LCOV_IGNORE    := --ignore-errors unused,empty,mismatch,inconsistent,source,gcov
 GENHTML_IGNORE := --ignore-errors unused,empty,mismatch,inconsistent,source,negative
 LCOV           := lcov $(LCOV_RC) $(LCOV_IGNORE)
 
-.PHONY: all asan valgrind coverage fuzz fuzz-run clean check-submodules
+.PHONY: all asan valgrind coverage fuzz fuzz-run fuzz-backup-run clean check-submodules
 
 all: asan
 
@@ -245,6 +245,7 @@ FUZZ_CC        ?= clang
 FUZZ_BIN       := $(BUILD)/fuzz_console
 FUZZ_TIME      ?= 60
 FUZZ_CORPUS    := fuzz_corpus
+FUZZ_DICT      := fuzz_console.dict
 FUZZ_FLAGS     := -std=c11 -g -O1 -fsanitize=fuzzer,address,undefined \
                   -fno-sanitize-recover=all
 FUZZ_INCLUDES  := -I$(ROOT) -I$(ROOT)/hardware -I$(ROOT)/network -I$(ROOT)/serial \
@@ -261,17 +262,37 @@ FUZZ_SRCS      := fuzz_console.c \
 FUZZ_DEFS      := -DLFS_NO_MALLOC -DLFS_NO_DEBUG
 FUZZ_LIBS      := -lmbedcrypto
 
-# Build the fuzzer only.
-fuzz: check-submodules $(FUZZ_BIN)
+# Direct backup_import() deserialiser harness: fuzz bytes go straight into the
+# untrusted-blob parser on a fresh RAM-backed littlefs, bypassing console +
+# login + admin + base64. See test/fuzz_backup.c. Only storage.c/backup.c and
+# the real littlefs are linked (no console/totp/qr surface).
+FUZZ_BACKUP_BIN    := $(BUILD)/fuzz_backup
+FUZZ_BACKUP_CORPUS := fuzz_backup_corpus
+FUZZ_BACKUP_SRCS   := fuzz_backup.c \
+                      $(ROOT)/storage/storage.c $(ROOT)/storage/backup.c \
+                      $(ROOT)/libs/littlefs/lfs.c $(ROOT)/libs/littlefs/lfs_util.c
+
+# Build both fuzzers.
+fuzz: check-submodules $(FUZZ_BIN) $(FUZZ_BACKUP_BIN)
 
 $(FUZZ_BIN): $(FUZZ_SRCS) | $(BUILD)
 	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_DEFS) $(FUZZ_INCLUDES) $(FUZZ_SRCS) $(FUZZ_LIBS) -o $@
 
-# Build + run a short bounded campaign from the seed corpus. Bump FUZZ_TIME for
-# a longer soak: `make -C test fuzz-run FUZZ_TIME=600`.
+$(FUZZ_BACKUP_BIN): $(FUZZ_BACKUP_SRCS) | $(BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_DEFS) $(FUZZ_INCLUDES) $(FUZZ_BACKUP_SRCS) -o $@
+
+# Build + run short bounded campaigns from the seed corpora. The console run is
+# fed the keyword dictionary so mutation can splice real commands together.
+# Bump FUZZ_TIME for a longer soak: `make -C test fuzz-run FUZZ_TIME=600`.
 fuzz-run: $(FUZZ_BIN)
 	@echo "== fuzzing serial console for $(FUZZ_TIME)s =="
-	$(FUZZ_BIN) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 $(FUZZ_CORPUS)
+	$(FUZZ_BIN) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
+	    -dict=$(FUZZ_DICT) $(FUZZ_CORPUS)
+
+fuzz-backup-run: $(FUZZ_BACKUP_BIN)
+	@echo "== fuzzing backup_import for $(FUZZ_TIME)s =="
+	$(FUZZ_BACKUP_BIN) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
+	    $(FUZZ_BACKUP_CORPUS)
 
 $(BUILD):
 	mkdir -p $(BUILD)
