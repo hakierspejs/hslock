@@ -108,28 +108,49 @@ void sleep_ms(uint32_t ms) {
     (void)ms; /* cmd_test would sleep 1s on hardware; skip it */
 }
 
+/* --- injectable clock / ntp / wifi environment -----------------------------
+ * The console command logic branches on RTC state (clock_get_unix_time()==0 →
+ * boot-bypass window), boot uptime (time_us_64() vs BOOT_BYPASS_WINDOW_US),
+ * NTP sync state and wifi-connect success. A single hardcoded environment
+ * leaves those branches unreachable. Instead the stubs read a per-run config
+ * (g_env); LLVMFuzzerTestOneInput replays each input under EVERY config in
+ * ENVS[] (see below), so one corpus entry drives all sides of these gates.
+ * ENVS[0] keeps the original {clock=1700000000, time>=WINDOW} environment so
+ * the precomputed TOTP seeds (code 218873, built for that clock) still reach
+ * the login accept/reject tails. */
+typedef struct {
+    uint32_t clock_unix;   /* clock_get_unix_time(): 0 == RTC not set */
+    uint64_t time_us;      /* time_us_64(): boot uptime, vs BOOT_BYPASS_WINDOW_US */
+    bool     ntp_sync_ok;  /* ntp_sync() result */
+    bool     wifi_conn_ok; /* wifi_connect() result */
+    bool     ntp_synced;   /* ntp_is_synced() */
+    uint32_t ntp_last;     /* ntp_last_sync_time() */
+} fuzz_env_t;
+
+static fuzz_env_t g_env = {1700000000u, 1234567890ULL, false, false, false, 0};
+
 uint64_t time_us_64(void) {
-    return 1234567890ULL; /* fixed uptime / boot-bypass clock */
+    return g_env.time_us;
 }
 
 uint32_t clock_get_unix_time(void) {
-    return 1700000000u; /* fixed, non-zero: RTC "set", enables the TOTP path */
+    return g_env.clock_unix;
 }
 
 bool ntp_is_synced(void) {
-    return false;
+    return g_env.ntp_synced;
 }
 uint32_t ntp_last_sync_time(void) {
-    return 0;
+    return g_env.ntp_last;
 }
 bool ntp_sync(void) {
-    return false;
+    return g_env.ntp_sync_ok;
 }
 
 bool wifi_connect(const char *ssid, const char *password) {
     (void)ssid;
     (void)password;
-    return false;
+    return g_env.wifi_conn_ok;
 }
 
 void pico_get_unique_board_id(pico_unique_board_id_t *id_out) {
@@ -191,31 +212,56 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
     return 0;
 }
 
+/* Clock / ntp / wifi environments each corpus input is replayed under. Every
+ * input runs once per entry, so a single seed reaches all sides of the
+ * RTC-bypass window, the NTP-synced and wifi-connect branches, etc.
+ *   [0] RTC set, uptime past bypass window, all HW ops fail — the ORIGINAL
+ *       environment; the precomputed-TOTP login seeds (clock==1700000000) hit
+ *       their accept/reject tails only here.
+ *   [1] RTC not set, WITHIN the bypass window  -> cmd_login "try again" error.
+ *   [2] RTC not set, PAST the bypass window     -> cmd_login RTC-open mode.
+ *   [3] RTC set, everything succeeds            -> ntp synced/last-sync,
+ *       sync-ntp ok, set-wifi connect ok + ntp ok.
+ *   [4] RTC set, wifi connect ok but ntp fails  -> set-wifi "ntp sync failed". */
+static const fuzz_env_t ENVS[] = {
+    {1700000000u, 1234567890ULL, false, false, false, 0},
+    {0u, 1000ULL, false, false, false, 0},
+    {0u, 400000000ULL, false, false, false, 0},
+    {1700000000u, 1234567890ULL, true, true, true, 1700000000u},
+    {1700000000u, 1234567890ULL, false, true, false, 0},
+};
+#define NUM_ENVS (sizeof(ENVS) / sizeof(ENVS[0]))
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-    /* Reset persistent state so this input reproduces deterministically. */
-    flash_ram_reset();
-    if (!storage_init())
-        return 0; /* format/mount failure is not an input-driven bug */
-    admin_mode  = false;
-    g_rng_state = RNG_SEED; /* first add-key of each run => fixed secret */
+    for (size_t e = 0; e < NUM_ENVS; e++) {
+        g_env = ENVS[e];
 
-    g_data      = data;
-    g_size      = size;
-    g_pos       = 0;
-    g_connected = true;
+        /* Reset persistent state so this input reproduces deterministically
+         * under each environment (independent of the previous env's run). */
+        flash_ram_reset();
+        if (!storage_init())
+            continue; /* format/mount failure is not an input-driven bug */
+        admin_mode  = false;
+        g_rng_state = RNG_SEED; /* first add-key of each run => fixed secret */
 
-    if (setjmp(g_reboot_jmp) == 0) {
-        /* First call connects (prints banner, consumes no byte); subsequent
-         * calls each read at most one byte. Drive until the input is drained. */
-        console_task(); /* connect */
-        while (g_pos < g_size)
-            console_task();
+        g_data      = data;
+        g_size      = size;
+        g_pos       = 0;
+        g_connected = true;
+
+        if (setjmp(g_reboot_jmp) == 0) {
+            /* First call connects (prints banner, consumes no byte); subsequent
+             * calls each read at most one byte. Drive until input is drained. */
+            console_task(); /* connect */
+            while (g_pos < g_size)
+                console_task();
+        }
+
+        /* Simulate USB disconnect: clears admin + zeroes the console input_len,
+         * so no console state leaks into the next run. */
+        g_connected = false;
+        console_task();
     }
-
-    /* Simulate USB disconnect: clears admin + zeroes the console input_len,
-     * so no console state leaks into the next run. */
-    g_connected = false;
-    console_task();
 
     return 0;
 }
