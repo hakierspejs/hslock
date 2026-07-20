@@ -28,6 +28,7 @@
 #include "pico/stdlib.h"    /* PICO_FLASH_SIZE_BYTES, PICO_OK */
 
 #include "backup.h"
+#include "lfs_util.h" /* lfs_crc: matches backup.c's whole-backup checksum */
 #include "storage.h"
 
 /* Must match storage.c's private layout constants. */
@@ -249,6 +250,34 @@ int main(void) {
     assert((size_t)elen == sizeof(backup_header_t));
     assert(backup_import(backup, (size_t)elen) == true);
     assert(storage_key_list(list, 16) == 0);
+
+    /* --- UBSan regression: non-bool flag byte in an otherwise-valid blob --- */
+    /* to_key_record() must not load is_enabled/is_admin straight into a `bool`:
+     * a crafted import blob can carry any byte there, and loading a bool whose
+     * object representation is not 0/1 is undefined behaviour (caught by
+     * -fsanitize=undefined). Build a valid 1-key blob, poke a non-bool flag
+     * byte, refresh the header CRC so the blob still validates, and import it.
+     * The import must succeed and the flag must read back canonicalised. */
+    {
+        key_record_t seed = make_key(9, "ub", true, false, 1234, 0x40);
+        assert(storage_key_save(&seed) == true);
+        uint8_t craft[sizeof backup];
+        int     clen = backup_export(craft, sizeof craft);
+        assert((size_t)clen == sizeof(backup_header_t) + sizeof(backup_key_t));
+        assert(storage_key_delete(9) == true);
+
+        backup_key_t *bk          = (backup_key_t *)(craft + sizeof(backup_header_t));
+        *(uint8_t *)&bk->is_admin = 67; /* non-bool byte in an otherwise-valid record */
+        backup_header_t *bh       = (backup_header_t *)craft;
+        bh->checksum              = lfs_crc(0xFFFFFFFF, bk, sizeof(backup_key_t));
+
+        assert(backup_import(craft, (size_t)clen) == true);
+        key_record_t g;
+        assert(storage_key_get(9, &g) == true);
+        assert(g.is_admin == true);   /* canonicalised: exactly 1, not 67 */
+        assert(g.is_enabled == true); /* untouched flag survives */
+        assert(storage_key_delete(9) == true);
+    }
 
     printf("storage OK\n");
     return 0;
