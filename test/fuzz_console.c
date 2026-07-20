@@ -209,6 +209,10 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
         perror("freopen stdout");
         return -1;
     }
+
+    /* console_init() is a near-no-op (USB stdio is brought up in CMakeLists on
+     * hardware); call it once so it is exercised by the coverage build. */
+    console_init();
     return 0;
 }
 
@@ -255,11 +259,21 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             console_task(); /* connect */
             while (g_pos < g_size)
                 console_task();
+            /* One more poll with the input drained but still connected: getchar
+             * returns PICO_ERROR_TIMEOUT, exercising the idle-poll early return
+             * (the common case on hardware, where most polls have no byte). */
+            console_task();
         }
 
         /* Simulate USB disconnect: clears admin + zeroes the console input_len,
          * so no console state leaks into the next run. */
         g_connected = false;
+        console_task();
+
+        /* A second poll while still disconnected: was_connected is now false, so
+         * both the just-disconnected block and the connect block are skipped and
+         * console_task falls through to the `if (!connected) return;` guard —
+         * the only path that reaches it (a disconnected idle poll). */
         console_task();
     }
 
