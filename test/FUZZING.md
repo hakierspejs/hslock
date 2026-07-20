@@ -1,10 +1,10 @@
 # Fuzzing the hslock parse/logic surface
 
-Four libFuzzer harnesses exercise every host-reachable byte of hslock's
+Five libFuzzer harnesses exercise every host-reachable byte of hslock's
 untrusted-input parse/logic surface. HW-I/O wrappers (`hardware/*`, real
 network I/O, `main.c`) are out of scope: they are not fuzzable on the host.
 
-## The four fuzzers
+## The five fuzzers
 
 | harness | entry point | what it drives |
 |---|---|---|
@@ -12,8 +12,9 @@ network I/O, `main.c`) are out of scope: they are not fuzzable on the host.
 | `fuzz_backup.c`   | raw backup blob            | `backup_import` (+ `to_key_record`) directly — header/version/count/CRC validation and the key-write loop. |
 | `fuzz_totp.c`     | (big-endian time, secret)  | `totp_verify` directly against the **real** mbedtls HMAC-SHA1 with an injectable fixed clock: reject, T-1/T/T+1 accept window, full-loop reject. |
 | `fuzz_storage.c`  | scripted CRUD ids/names    | `storage.c` public API (init/save/get/list/delete, wifi set/get/clear) on the RAM-mapped XIP window. |
+| `fuzz_ntp.c`      | 48-byte NTP datagram body  | `ntp_recv_cb` directly — the **remote** untrusted surface (an NTP server or on-path spoofer): the too-short guard, the fixed 48-byte copy/parse, the big-endian transmit-timestamp decode, and both `rollback_check` arms via a deterministic preset + injectable clock. Includes `network/ntp.c` to reach the static callback. |
 
-All four build with **clang libFuzzer + ASan + UBSan**
+All five build with **clang libFuzzer + ASan + UBSan**
 (`-fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all`) and link the
 real `libmbedcrypto`, so **`libmbedtls-dev` and clang (with the sanitizer/fuzzer
 runtime) are required**. If plain `clang` is unavailable use
@@ -22,11 +23,12 @@ runtime) are required**. If plain `clang` is unavailable use
 ## Running
 
 ```sh
-make -C test fuzz            # build all four fuzzer binaries
+make -C test fuzz            # build all five fuzzer binaries
 make -C test fuzz-run        # run fuzz_console from its committed corpus
 make -C test fuzz-backup-run # "  fuzz_backup
 make -C test fuzz-totp-run   # "  fuzz_totp
 make -C test fuzz-storage-run# "  fuzz_storage
+make -C test fuzz-ntp-run    # "  fuzz_ntp
 make -C test fuzz-cov        # gcc --coverage replay of the committed corpora,
                              #   prints the surface coverage table below
 make -C test asan            # the (clang-independent) ASan+UBSan unit gate
@@ -34,8 +36,9 @@ make -C test asan            # the (clang-independent) ASan+UBSan unit gate
 
 `fuzz-cov` is a deterministic gcc `--coverage -DFUZZ_REPLAY` build: it replays
 the **committed** corpora (`fuzz_corpus`, `fuzz_backup_corpus`,
-`fuzz_totp_corpus`, `fuzz_storage_corpus`) through `LLVMFuzzerTestOneInput`,
-merges the lcov trace, and restricts it to the 9 surface files. The table is
+`fuzz_totp_corpus`, `fuzz_storage_corpus`, `fuzz_ntp_corpus`) through
+`LLVMFuzzerTestOneInput`, merges the lcov trace, and restricts it to the 10
+surface files. The table is
 reproducible from the committed corpus alone — coverage-growth units are not
 committed (they add libFuzzer feature buckets but no new surface edges).
 
@@ -45,6 +48,7 @@ committed (they add libFuzzer feature buckets but no new surface edges).
                              |Lines       |Functions  |Branches
 Filename                     |Rate     Num|Rate    Num|Rate     Num
 ===================================================================
+network/ntp.c                |55.7%     97|88.9%     9|43.3%     30
 serial/commands.c            | 100%     39| 100%     4| 100%     22
 serial/commands_backup.c     |87.5%     24| 100%     2|83.3%      6
 serial/commands_keys.c       |93.1%    216| 100%    10|88.7%    106
@@ -55,12 +59,17 @@ shared/totp.c                | 100%     25| 100%     2| 100%      6
 storage/backup.c             |92.0%     75| 100%     5|84.6%     26
 storage/storage.c            |93.2%    146| 100%    20|79.6%     54
 ===================================================================
-                       Total:|94.8%    730| 100%    55|89.8%    324
+                       Total:|90.2%    827|98.4%    64|85.9%    354
 ```
 
-**Surface total: 94.8% lines (692/730), 100% functions (55/55),
-89.8% branches (291/324).** This is a documented plateau: 240s
-coverage-guided campaigns on all four fuzzers reproduce exactly these numbers.
+**Surface total: 90.2% lines (746/827), 98.4% functions (63/64),
+85.9% branches (304/354).** This is a documented plateau: 240s
+coverage-guided campaigns on all five fuzzers reproduce exactly these numbers.
+
+`network/ntp.c`'s residual is HW-only: the sole uncovered function
+`dns_found_cb` (and the matching tail of `ntp_sync`) is the DNS-resolve +
+`udp_sendto` request path, which needs a live lwIP stack — the parse/rollback
+surface reachable from a received datagram is fully driven.
 
 ## Bugs found and fixed
 

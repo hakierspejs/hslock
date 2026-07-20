@@ -110,7 +110,7 @@ LCOV_IGNORE    := --ignore-errors unused,empty,mismatch,inconsistent,source,gcov
 GENHTML_IGNORE := --ignore-errors unused,empty,mismatch,inconsistent,source,negative
 LCOV           := lcov $(LCOV_RC) $(LCOV_IGNORE)
 
-.PHONY: all asan valgrind coverage fuzz fuzz-run fuzz-backup-run fuzz-totp-run fuzz-storage-run fuzz-cov gen-backup-seeds clean check-submodules
+.PHONY: all asan valgrind coverage fuzz fuzz-run fuzz-backup-run fuzz-totp-run fuzz-storage-run fuzz-ntp-run fuzz-cov gen-backup-seeds clean check-submodules
 
 all: asan
 
@@ -296,8 +296,19 @@ FUZZ_STORAGE_SRCS   := fuzz_storage.c \
                        $(ROOT)/storage/storage.c \
                        $(ROOT)/libs/littlefs/lfs.c $(ROOT)/libs/littlefs/lfs_util.c
 
+# Direct NTP response-parser harness: fuzz bytes become a 48-byte UDP datagram
+# body fed straight into ntp_recv_cb() -- the REMOTE untrusted-input surface (an
+# NTP server or on-path spoofer). ntp_recv_cb is static, so fuzz_ntp.c #includes
+# the real network/ntp.c (all lwip/pico/hardware symbols stubbed inside the
+# harness); network/ntp.c is a prerequisite, not a compiled source. See
+# test/fuzz_ntp.c.
+FUZZ_NTP_BIN    := $(BUILD)/fuzz_ntp
+FUZZ_NTP_CORPUS := fuzz_ntp_corpus
+FUZZ_NTP_SRCS   := fuzz_ntp.c
+
 # Build all fuzzers.
-fuzz: check-submodules $(FUZZ_BIN) $(FUZZ_BACKUP_BIN) $(FUZZ_TOTP_BIN) $(FUZZ_STORAGE_BIN)
+fuzz: check-submodules $(FUZZ_BIN) $(FUZZ_BACKUP_BIN) $(FUZZ_TOTP_BIN) $(FUZZ_STORAGE_BIN) \
+      $(FUZZ_NTP_BIN)
 
 $(FUZZ_BIN): $(FUZZ_SRCS) | $(BUILD)
 	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_DEFS) $(FUZZ_INCLUDES) $(FUZZ_SRCS) $(FUZZ_LIBS) -o $@
@@ -310,6 +321,9 @@ $(FUZZ_TOTP_BIN): $(FUZZ_TOTP_SRCS) | $(BUILD)
 
 $(FUZZ_STORAGE_BIN): $(FUZZ_STORAGE_SRCS) | $(BUILD)
 	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_DEFS) $(FUZZ_INCLUDES) $(FUZZ_STORAGE_SRCS) -o $@
+
+$(FUZZ_NTP_BIN): $(FUZZ_NTP_SRCS) $(ROOT)/network/ntp.c | $(BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_INCLUDES) $(FUZZ_NTP_SRCS) -o $@
 
 # Build + run short bounded campaigns from the seed corpora. The console run is
 # fed the keyword dictionary so mutation can splice real commands together.
@@ -333,6 +347,11 @@ fuzz-storage-run: $(FUZZ_STORAGE_BIN)
 	@echo "== fuzzing storage CRUD for $(FUZZ_TIME)s =="
 	$(FUZZ_STORAGE_BIN) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
 	    $(FUZZ_STORAGE_CORPUS)
+
+fuzz-ntp-run: $(FUZZ_NTP_BIN)
+	@echo "== fuzzing ntp_recv_cb for $(FUZZ_TIME)s =="
+	$(FUZZ_NTP_BIN) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
+	    $(FUZZ_NTP_CORPUS)
 
 # --- Curated backup_import() seed generator ---------------------------------
 # Regenerates the committed fuzz_backup_corpus/ blobs: one per backup_import
@@ -366,7 +385,7 @@ FUZZ_COV_OUT := $(COV_DIR)/fuzz-surface.txt
 # The fuzzable parse/logic surface (HW-I/O wrappers are out of scope).
 SURFACE_SRCS := serial/commands.c serial/commands_system.c serial/commands_keys.c \
                 serial/commands_network.c serial/commands_backup.c serial/console.c \
-                storage/storage.c storage/backup.c shared/totp.c
+                storage/storage.c storage/backup.c shared/totp.c network/ntp.c
 SURFACE_ABS  := $(addprefix $(REPO_ROOT)/,$(SURFACE_SRCS))
 
 # Same lcov config as `coverage`, plus function coverage so the per-function
@@ -383,11 +402,14 @@ fuzz-cov: check-submodules | $(FUZZ_COV_OBJ)
 	    $(FUZZ_TOTP_SRCS) fuzz_replay.c $(FUZZ_TOTP_LIBS) -o $(FUZZ_COV_OBJ)/cov_totp
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(FUZZ_DEFS) -DFUZZ_REPLAY $(FUZZ_INCLUDES) \
 	    $(FUZZ_STORAGE_SRCS) fuzz_replay.c -o $(FUZZ_COV_OBJ)/cov_storage
+	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) -DFUZZ_REPLAY $(FUZZ_INCLUDES) \
+	    $(FUZZ_NTP_SRCS) fuzz_replay.c -o $(FUZZ_COV_OBJ)/cov_ntp
 	@echo "== fuzz-cov: replaying corpora =="
 	$(FUZZ_COV_OBJ)/cov_console $(FUZZ_CORPUS)
 	$(FUZZ_COV_OBJ)/cov_backup $(FUZZ_BACKUP_CORPUS)
 	$(FUZZ_COV_OBJ)/cov_totp $(FUZZ_TOTP_CORPUS)
 	$(FUZZ_COV_OBJ)/cov_storage $(FUZZ_STORAGE_CORPUS)
+	$(FUZZ_COV_OBJ)/cov_ntp $(FUZZ_NTP_CORPUS)
 	@echo "== fuzz-cov: capturing + merging coverage =="
 	$(FCOV_LCOV) --capture --initial --directory $(FUZZ_COV_OBJ) \
 	    --output-file $(COV_DIR)/fuzz-base.info
@@ -408,7 +430,7 @@ fuzz-cov: check-submodules | $(FUZZ_COV_OBJ)
 	  echo; \
 	  echo "Uncovered functions across the surface:"; \
 	  awk -F'[:,]' '\
-	    /^SF:/   { sf=$$2; sub(/.*\/(serial|storage|shared)\//,"",sf) } \
+	    /^SF:/   { sf=$$2; sub(/.*\/(serial|storage|shared|network)\//,"",sf) } \
 	    /^FNA:/  { if ($$3==0) print "  " sf "  " $$4 } \
 	    /^FNDA:/ { if ($$2==0) print "  " sf "  " $$3 }' \
 	    $(COV_DIR)/fuzz-surface.info | sort || true; \
