@@ -86,15 +86,23 @@ int getchar_timeout_us(uint32_t timeout_us) {
 
 /* --- hardware / network leaves: no-op stubs ------------------------------- */
 
-void buzzer_play_command_ack(void) {}
-void buzzer_play_auth_error(void) {}
-void buzzer_beep_short(void) {}
+void buzzer_play_command_ack(void) {
+}
+void buzzer_play_auth_error(void) {
+}
+void buzzer_beep_short(void) {
+}
 
-void latch_open(void) {}
-void light_on(void) {}
-void light_off(void) {}
-void led_on(void) {}
-void led_off(void) {}
+void latch_open(void) {
+}
+void light_on(void) {
+}
+void light_off(void) {
+}
+void led_on(void) {
+}
+void led_off(void) {
+}
 
 void sleep_ms(uint32_t ms) {
     (void)ms; /* cmd_test would sleep 1s on hardware; skip it */
@@ -108,9 +116,15 @@ uint32_t clock_get_unix_time(void) {
     return 1700000000u; /* fixed, non-zero: RTC "set", enables the TOTP path */
 }
 
-bool     ntp_is_synced(void) { return false; }
-uint32_t ntp_last_sync_time(void) { return 0; }
-bool     ntp_sync(void) { return false; }
+bool ntp_is_synced(void) {
+    return false;
+}
+uint32_t ntp_last_sync_time(void) {
+    return 0;
+}
+bool ntp_sync(void) {
+    return false;
+}
 
 bool wifi_connect(const char *ssid, const char *password) {
     (void)ssid;
