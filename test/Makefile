@@ -110,7 +110,7 @@ LCOV_IGNORE    := --ignore-errors unused,empty,mismatch,inconsistent,source,gcov
 GENHTML_IGNORE := --ignore-errors unused,empty,mismatch,inconsistent,source,negative
 LCOV           := lcov $(LCOV_RC) $(LCOV_IGNORE)
 
-.PHONY: all asan valgrind coverage clean check-submodules
+.PHONY: all asan valgrind coverage fuzz fuzz-run clean check-submodules
 
 all: asan
 
@@ -229,6 +229,49 @@ coverage: check-submodules | $(COV_DIR)/obj
 	@echo "== coverage summary =="
 	$(LCOV) --summary $(COV_DIR)/coverage.info
 	@echo "== coverage OK: report at $(COV_DIR)/html/index.html =="
+
+# --- libFuzzer console harness ----------------------------------------------
+# End-to-end fuzzing of the serial-console command interface: fuzz bytes flow
+# through the REAL console_task() char accumulator -> process_line() tokeniser
+# -> commands_dispatch() -> real cmd_* handlers -> storage.c/backup.c on a
+# genuine littlefs backed by a RAM-mapped XIP window. Only hardware/network
+# leaves are stubbed. See test/fuzz_console.c for the driver.
+#
+# libFuzzer + ASan + UBSan REQUIRE clang (with the sanitizer/fuzzer runtime),
+# so this target is kept separate from the gcc-based asan/valgrind/coverage
+# gates and never runs as part of `all`. Override the compiler with
+# `make -C test fuzz FUZZ_CC=clang-19` if plain `clang` is unavailable.
+FUZZ_CC        ?= clang
+FUZZ_BIN       := $(BUILD)/fuzz_console
+FUZZ_TIME      ?= 60
+FUZZ_CORPUS    := fuzz_corpus
+FUZZ_FLAGS     := -std=c11 -g -O1 -fsanitize=fuzzer,address,undefined \
+                  -fno-sanitize-recover=all
+FUZZ_INCLUDES  := -I$(ROOT) -I$(ROOT)/hardware -I$(ROOT)/network -I$(ROOT)/serial \
+                  -I$(ROOT)/storage -I$(SHARED) -I$(BASE32) -I$(BASE64) \
+                  -I$(QRCODEGEN) -I$(ROOT)/libs/littlefs -idirafter stub
+FUZZ_SRCS      := fuzz_console.c \
+                  $(ROOT)/serial/console.c $(ROOT)/serial/commands.c \
+                  $(ROOT)/serial/commands_system.c $(ROOT)/serial/commands_keys.c \
+                  $(ROOT)/serial/commands_network.c $(ROOT)/serial/commands_backup.c \
+                  $(ROOT)/storage/storage.c $(ROOT)/storage/backup.c \
+                  $(SHARED)/totp.c $(SHARED)/random.c \
+                  $(BASE32)/base32.c $(BASE64)/base64.c $(QRCODEGEN)/qrcodegen.c \
+                  $(ROOT)/libs/littlefs/lfs.c $(ROOT)/libs/littlefs/lfs_util.c
+FUZZ_DEFS      := -DLFS_NO_MALLOC -DLFS_NO_DEBUG
+FUZZ_LIBS      := -lmbedcrypto
+
+# Build the fuzzer only.
+fuzz: check-submodules $(FUZZ_BIN)
+
+$(FUZZ_BIN): $(FUZZ_SRCS) | $(BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_DEFS) $(FUZZ_INCLUDES) $(FUZZ_SRCS) $(FUZZ_LIBS) -o $@
+
+# Build + run a short bounded campaign from the seed corpus. Bump FUZZ_TIME for
+# a longer soak: `make -C test fuzz-run FUZZ_TIME=600`.
+fuzz-run: $(FUZZ_BIN)
+	@echo "== fuzzing serial console for $(FUZZ_TIME)s =="
+	$(FUZZ_BIN) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 $(FUZZ_CORPUS)
 
 $(BUILD):
 	mkdir -p $(BUILD)
