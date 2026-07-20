@@ -93,6 +93,10 @@ an export-fail arm that no caller can trigger. None is a reachable-but-unseeded
 residual.
 
 ### serial/commands.c — none (100%).
+The dispatch arg-count usage-error arm (`user_args < min_args || user_args > max_args`)
+and `cmd_help`'s admin-visible path are driven from the committed corpus by the
+`argerr_toofew` / `argerr_toomany` / `argerr_status` / `help_admin` console seeds.
+
 ### serial/console.c — none (100%).
 ### shared/totp.c — none (100%).
 
