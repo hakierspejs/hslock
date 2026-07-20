@@ -110,7 +110,7 @@ LCOV_IGNORE    := --ignore-errors unused,empty,mismatch,inconsistent,source,gcov
 GENHTML_IGNORE := --ignore-errors unused,empty,mismatch,inconsistent,source,negative
 LCOV           := lcov $(LCOV_RC) $(LCOV_IGNORE)
 
-.PHONY: all asan valgrind coverage fuzz fuzz-run fuzz-backup-run clean check-submodules
+.PHONY: all asan valgrind coverage fuzz fuzz-run fuzz-backup-run fuzz-cov clean check-submodules
 
 all: asan
 
@@ -293,6 +293,69 @@ fuzz-backup-run: $(FUZZ_BACKUP_BIN)
 	@echo "== fuzzing backup_import for $(FUZZ_TIME)s =="
 	$(FUZZ_BACKUP_BIN) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
 	    $(FUZZ_BACKUP_CORPUS)
+
+# --- Fuzzer coverage of the parse/logic surface ----------------------------
+# REPEATABLE measurement of how much of the fuzzable surface the committed
+# corpora exercise. Each fuzzer's sources are rebuilt with gcc --coverage and
+# -DFUZZ_REPLAY (no libFuzzer runtime) and linked with the plain replay main
+# (fuzz_replay.c), producing cov_console / cov_backup. Each replays its corpus
+# once per file, then lcov captures + merges both runs and restricts the report
+# to the nine surface files. cov_console and cov_backup share storage.c/backup.c
+# sources; because their .gcno/.gcda are prefixed with the output basename they
+# do not collide, and capturing the whole obj dir merges the two runs' hits per
+# source file (the union coverage we want). Output: a per-file + per-function
+# summary to stdout and to $(FUZZ_COV_OUT) (gitignored under coverage/).
+FUZZ_COV_OBJ := $(COV_DIR)/fuzzobj
+FUZZ_COV_OUT := $(COV_DIR)/fuzz-surface.txt
+
+# The fuzzable parse/logic surface (HW-I/O wrappers are out of scope).
+SURFACE_SRCS := serial/commands.c serial/commands_system.c serial/commands_keys.c \
+                serial/commands_network.c serial/commands_backup.c serial/console.c \
+                storage/storage.c storage/backup.c shared/totp.c
+SURFACE_ABS  := $(addprefix $(REPO_ROOT)/,$(SURFACE_SRCS))
+
+# Same lcov config as `coverage`, plus function coverage so the per-function
+# summary and the uncovered-function list are populated.
+FCOV_LCOV := lcov $(LCOV_RC) --rc function_coverage=1 $(LCOV_IGNORE)
+
+fuzz-cov: check-submodules | $(FUZZ_COV_OBJ)
+	@echo "== fuzz-cov: building replay binaries (gcc --coverage) =="
+	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(FUZZ_DEFS) -DFUZZ_REPLAY $(FUZZ_INCLUDES) \
+	    $(FUZZ_SRCS) fuzz_replay.c $(FUZZ_LIBS) -o $(FUZZ_COV_OBJ)/cov_console
+	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(FUZZ_DEFS) -DFUZZ_REPLAY $(FUZZ_INCLUDES) \
+	    $(FUZZ_BACKUP_SRCS) fuzz_replay.c -o $(FUZZ_COV_OBJ)/cov_backup
+	@echo "== fuzz-cov: replaying corpora =="
+	$(FUZZ_COV_OBJ)/cov_console $(FUZZ_CORPUS)
+	$(FUZZ_COV_OBJ)/cov_backup $(FUZZ_BACKUP_CORPUS)
+	@echo "== fuzz-cov: capturing + merging coverage =="
+	$(FCOV_LCOV) --capture --initial --directory $(FUZZ_COV_OBJ) \
+	    --output-file $(COV_DIR)/fuzz-base.info
+	$(FCOV_LCOV) --capture --directory $(FUZZ_COV_OBJ) \
+	    --output-file $(COV_DIR)/fuzz-run.info
+	$(FCOV_LCOV) --add-tracefile $(COV_DIR)/fuzz-base.info \
+	    --add-tracefile $(COV_DIR)/fuzz-run.info \
+	    --output-file $(COV_DIR)/fuzz-merged.info
+	@echo "== fuzz-cov: extracting the surface files =="
+	$(FCOV_LCOV) --extract $(COV_DIR)/fuzz-merged.info $(SURFACE_ABS) \
+	    --output-file $(COV_DIR)/fuzz-surface.info
+	@echo "== fuzz-cov: surface summary (also written to $(FUZZ_COV_OUT)) =="
+	@{ \
+	  echo "hslock fuzzer coverage of the parse/logic surface"; \
+	  echo "corpora: $(FUZZ_CORPUS) (console) + $(FUZZ_BACKUP_CORPUS) (backup)"; \
+	  echo; \
+	  $(FCOV_LCOV) --list $(COV_DIR)/fuzz-surface.info; \
+	  echo; \
+	  echo "Uncovered functions across the surface:"; \
+	  awk -F'[:,]' '\
+	    /^SF:/   { sf=$$2; sub(/.*\/(serial|storage|shared)\//,"",sf) } \
+	    /^FNA:/  { if ($$3==0) print "  " sf "  " $$4 } \
+	    /^FNDA:/ { if ($$2==0) print "  " sf "  " $$3 }' \
+	    $(COV_DIR)/fuzz-surface.info | sort || true; \
+	} | tee $(FUZZ_COV_OUT)
+	@echo "== fuzz-cov OK: $(FUZZ_COV_OUT) =="
+
+$(FUZZ_COV_OBJ):
+	mkdir -p $(FUZZ_COV_OBJ)
 
 $(BUILD):
 	mkdir -p $(BUILD)
