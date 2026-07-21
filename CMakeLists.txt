@@ -89,6 +89,7 @@ file(GLOB SHARED_SOURCES   CONFIGURE_DEPENDS "shared/*.c")
 
 add_executable(hslock
     main.c
+    core1.c
     ${SERIAL_SOURCES}
     ${HARDWARE_SOURCES}
     ${NETWORK_SOURCES}
@@ -111,6 +112,7 @@ target_link_libraries(hslock
     hardware_rtc
     hardware_pwm
     hardware_flash
+    hardware_watchdog
     littlefs
     base64
     qrcodegen

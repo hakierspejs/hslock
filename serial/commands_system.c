@@ -103,10 +103,11 @@ void cmd_get_time(int argc, char **argv) {
 
 void cmd_test(int argc, char **argv) {
     light_on();
+    sleep_ms(1000);
+    light_off();
     led_on();
     sleep_ms(1000);
     led_off();
-    light_off();
     latch_open();
 
     buzzer_play_command_ack();

@@ -142,7 +142,7 @@ void cmd_get_key_secret(int argc, char **argv) {
     for (int y = -QR_BORDER; y < size + QR_BORDER; y++) {
         for (int x = -QR_BORDER; x < size + QR_BORDER; x++) {
             bool dark = (x >= 0 && y >= 0 && x < size && y < size) && qrcodegen_getModule(qr, x, y);
-            printf(dark ? "##" : "  ");
+            printf(dark ? "██" : "  ");
         }
         printf("\r\n");
     }

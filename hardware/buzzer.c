@@ -56,3 +56,21 @@ void buzzer_play_ntp_sync_error() {
     buzzer_beep_short();
     buzzer_beep_medium();
 }
+
+void buzzer_play_success(void) {
+    buzzer_beep_short();
+}
+
+void buzzer_play_fail(void) {
+    buzzer_beep_medium();
+    buzzer_beep_medium();
+}
+
+void buzzer_play_doorbell(void) {
+    buzzer_beep_medium();
+    buzzer_beep_short();
+    buzzer_beep_medium();
+    buzzer_beep_short();
+    buzzer_beep_medium();
+    buzzer_beep_short();
+}

@@ -3,11 +3,14 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 
+#include "core1.h"
+
 #include "hardware/buzzer.h"
 #include "hardware/keypad.h"
 #include "hardware/latch.h"
 #include "hardware/light.h"
 #include "hardware/led.h"
+#include "hardware/watchdog.h"
 
 #include "network/wifi.h"
 #include "network/ntp.h"
@@ -16,24 +19,6 @@
 #include "serial/console.h"
 
 #include "storage/storage.h"
-
-static void main1(void) {
-    // allow pausing core 1 while writing to flash
-    multicore_lockout_victim_init();
-    multicore_fifo_push_blocking(1); // signal core 0: ready
-
-    keypad_init();
-
-    while (true) {
-        char key = keypad_get_key();
-        if (key) {
-            // TODO: accumulate digits, verify TOTP, drive latch
-            printf("[keypad] key pressed: %c\r\n", key);
-            buzzer_beep_short();
-        }
-        sleep_ms(5);
-    }
-}
 
 static void boot_network(void) {
     wifi_config_t cfg;
@@ -73,6 +58,8 @@ int main(void) {
 
     buzzer_beep_short();
 
+    watchdog_enable(8000, true); // 8 second timeout, pause on debug
+
     // Core 1 must be running and ready before any flash writes
     multicore_launch_core1(main1);
     multicore_fifo_pop_blocking(); // wait for core 1 ready signal
@@ -88,6 +75,7 @@ int main(void) {
 
     while (true) {
         console_task();
+        wifi_task();
         ntp_task();
         sleep_ms(10);
     }

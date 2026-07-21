@@ -11,10 +11,8 @@ void led_init() {
 
 void led_on() {
     gpio_put(LED_PIN, true);
-    printf("lon\n");
 }
 
 void led_off() {
     gpio_put(LED_PIN, false);
-    printf("loff\n");
 }

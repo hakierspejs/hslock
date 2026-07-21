@@ -9,4 +9,6 @@ bool wifi_connect(const char *ssid, const char *password);
 // True if currently connected
 bool wifi_is_connected(void);
 
+void wifi_task(void);
+
 #endif

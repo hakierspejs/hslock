@@ -1,4 +1,5 @@
 #include "ntp.h"
+#include "wifi.h"
 #include "hardware/buzzer.h"
 #include "hardware/rtc.h"
 #include "hardware/clock.h"
@@ -188,6 +189,8 @@ bool ntp_sync(void) {
 
 void ntp_task(void) {
     if (!synced)
+        return;
+    if (!wifi_is_connected())
         return;
 
     uint64_t elapsed_us = time_us_64() - last_sync_monotonic_us;
