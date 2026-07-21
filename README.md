@@ -5,28 +5,10 @@
 ![Build](https://github.com//hakierspejs/hslock/actions/workflows/ci.yml/badge.svg)
 ![Build](https://github.com//hakierspejs/hslock/actions/workflows/test.yml/badge.svg)
 
-## Building
+## Use
 
-```bash
-./build.sh [options]
-```
+Usage instructions can be found in [KEYPAD.md](./docs/KEYPAD.md) and [COMMANDS.md](./docs/COMMANDS.md).
 
-| Option | Description |
-| -------- | ------------- |
-| `--clean` | Remove build directory before building |
-| `--flash` | Flash firmware after building |
-| `--erase` | Erase entire flash (remove all keys) |
+## Build
 
-Device must have the board connected in BOOTSEL mode for `--flash` and `--erase`.
-
-## Connect
-
-Use PuTTY or screen to connect via serial USB.
-
-```sh
-putty -serial /dev/ttyACM0 -sercfg 115200,8,n,1,N
-```
-
-```sh
-screen /dev/ttyACM0 115200
-```
+Building and flashing instructions are located in [BUILD.md](./docs/BUILD.md).

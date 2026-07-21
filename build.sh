@@ -22,6 +22,13 @@ if [ $CLEAN -eq 1 ]; then
     exit 0
 fi
 
+if [ $ERASE -eq 1 ]; then
+    echo "erasing flash..."
+    picotool erase -f
+    echo "erase ok"
+    exit 0
+fi
+
 mkdir -p build
 cd build
 cmake -DPICO_BOARD=pico_w ..
@@ -30,12 +37,6 @@ cd ..
 
 cp build/hslock.uf2 hslock.uf2
 echo "build ok - hslock.uf2 ready"
-
-if [ $ERASE -eq 1 ]; then
-    echo "erasing flash..."
-    picotool erase -f
-    echo "erase ok"
-fi
 
 if [ $FLASH -eq 1 ]; then
     echo "flashing..."
