@@ -1,7 +1,6 @@
 #include "ntp.h"
 #include "wifi.h"
 #include "hardware/buzzer.h"
-#include "hardware/rtc.h"
 #include "hardware/clock.h"
 
 #include "pico/cyw43_arch.h"
@@ -71,6 +70,8 @@ static void apply_time(uint32_t unix_time) {
     last_sync_unix         = unix_time;
     last_sync_monotonic_us = time_us_64();
     synced                 = true;
+
+    printf("[ntp] synced: unix=%u\r\n", unix_time);
 }
 
 // ---------------------------------------------------------------------------
