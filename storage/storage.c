@@ -80,6 +80,7 @@ static key_record_t to_record(const key_record_stored_t *s) {
     k.created_at        = s->created_at;
     k.is_checksum_valid = (s->checksum == key_checksum(s));
     memcpy(k.name, s->name, sizeof(k.name));
+    k.name[KEY_NAME_MAX - 1] = '\0';
     memcpy(k.secret, s->secret, sizeof(k.secret));
     return k;
 }
@@ -197,16 +198,9 @@ static void key_path(uint16_t id, char *out, size_t out_size) {
 
 bool storage_init(void) {
     int rc = lfs_mount(&lfs, &LFS_CFG);
-
     if (rc < 0) {
-        printf("[storage] mount failed, formatting...\r\n");
-        rc = lfs_format(&lfs, &LFS_CFG);
-        if (rc < 0)
-            return false;
-
-        rc = lfs_mount(&lfs, &LFS_CFG);
-        if (rc < 0)
-            return false;
+        printf("[storage] mount FAILED (rc=%d) - will not auto-format\r\n", rc);
+        return false;
     }
 
     if (!ensure_dirs()) {
@@ -217,6 +211,21 @@ bool storage_init(void) {
     mounted = true;
     printf("[storage] init ok\r\n");
     return true;
+}
+
+bool storage_is_mounted(void) {
+    return mounted;
+}
+
+bool storage_format(void) {
+    mounted = false;
+    int rc  = lfs_format(&lfs, &LFS_CFG);
+    if (rc < 0) {
+        printf("[storage] format failed (rc=%d)\r\n", rc);
+        return false;
+    }
+    printf("[storage] format ok\r\n");
+    return storage_init();
 }
 
 // ---------------------------------------------------------------------------

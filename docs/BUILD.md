@@ -4,10 +4,10 @@
 
 Install these before proceeding:
 
-- [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) — set `PICO_SDK_PATH` in your environment
+- [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) - set `PICO_SDK_PATH` in your environment
 - [CMake](https://cmake.org/) 3.13+
 - [GNU Arm Embedded Toolchain](https://developer.arm.com/downloads/-/gnu-rm) (`arm-none-eabi-gcc`)
-- [picotool](https://github.com/raspberrypi/picotool) — optional, for `--flash` and `--erase`
+- [picotool](https://github.com/raspberrypi/picotool) - optional, for `--flash` and `--erase`
 
 On Debian based systems all dependencies can be installed with:
 
@@ -41,7 +41,7 @@ cd hslock
 git submodule update --init --recursive
 ```
 
-The `--recursive` flag is required — LittleFS, qrcodegen and other libraries are included as submodules.
+The `--recursive` flag is required - LittleFS, qrcodegen and other libraries are included as submodules.
 
 ## Build
 

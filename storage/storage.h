@@ -9,10 +9,10 @@
 // Key record - fields stored per TOTP key
 // ---------------------------------------------------------------------------
 
-#define KEY_MAX_COUNT 256
+#define KEY_MAX_COUNT 128
 #define KEY_ID_MAX    KEY_MAX_COUNT - 1
 
-#define KEY_NAME_MAX   32
+#define KEY_NAME_MAX   16
 #define KEY_SECRET_LEN 20 // HMAC-SHA1 seed, matches old Arduino format
 
 typedef struct {
@@ -44,6 +44,12 @@ typedef struct {
 // Mount LittleFS. Call once from core 0 before launching core 1.
 // Returns false if mount fails (formats and retries once).
 bool storage_init(void);
+
+bool storage_is_mounted(void);
+
+// Explicitly erase and reinitialise storage.
+// Only call when storage_init() has failed and operator has confirmed.
+bool storage_format(void);
 
 // WiFi credentials
 bool storage_wifi_get(wifi_config_t *out);

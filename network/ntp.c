@@ -4,6 +4,7 @@
 #include "hardware/clock.h"
 
 #include "pico/cyw43_arch.h"
+#include "pico/rand.h"
 #include "pico/time.h"
 #include "lwip/udp.h"
 #include "lwip/dns.h"
@@ -33,7 +34,8 @@ typedef enum {
 } ntp_state_t;
 
 static ntp_state_t     ntp_state = NTP_STATE_IDLE;
-static struct udp_pcb *ntp_pcb   = NULL;
+static uint8_t         ntp_nonce[8]; // stored transmit timestamp for origin check
+static struct udp_pcb *ntp_pcb = NULL;
 static ip_addr_t       server_addr;
 
 static bool     synced                 = false;
@@ -80,7 +82,7 @@ static void apply_time(uint32_t unix_time) {
 
 static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr,
                         u16_t port) {
-    if (p->len < 48) {
+    if (p->tot_len < 48) { // use tot_len not len (L10 fix too)
         printf("[ntp] response too short\r\n");
         pbuf_free(p);
         ntp_state = NTP_STATE_FAILED;
@@ -90,6 +92,41 @@ static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip
     uint8_t buf[48];
     pbuf_copy_partial(p, buf, 48, 0);
     pbuf_free(p);
+
+    // Validate source (belt-and-suspenders — udp_connect already filters)
+    if (!ip_addr_cmp(addr, &server_addr) || port != NTP_PORT) {
+        printf("[ntp] unexpected source\r\n");
+        ntp_state = NTP_STATE_FAILED;
+        return;
+    }
+
+    // Validate LI, VN, mode — buf[0]: LI(7:6) VN(5:3) mode(2:0)
+    uint8_t li      = (buf[0] >> 6) & 0x03;
+    uint8_t mode    = buf[0] & 0x07;
+    uint8_t stratum = buf[1];
+
+    if (li == 3) { // LI=3: clock unsynchronised
+        printf("[ntp] server clock unsynchronised\r\n");
+        ntp_state = NTP_STATE_FAILED;
+        return;
+    }
+    if (mode != 4) { // mode must be 4 (server)
+        printf("[ntp] unexpected mode: %u\r\n", mode);
+        ntp_state = NTP_STATE_FAILED;
+        return;
+    }
+    if (stratum == 0 || stratum > 15) { // 0=kiss-o-death, >15=invalid
+        printf("[ntp] invalid stratum: %u\r\n", stratum);
+        ntp_state = NTP_STATE_FAILED;
+        return;
+    }
+
+    // Verify origin timestamp (bytes 24-31) echoes our nonce
+    if (memcmp(&buf[24], ntp_nonce, 8) != 0) {
+        printf("[ntp] origin timestamp mismatch — possible replay\r\n");
+        ntp_state = NTP_STATE_FAILED;
+        return;
+    }
 
     uint32_t seconds_since_1900 = ((uint32_t)buf[40] << 24) | ((uint32_t)buf[41] << 16) |
                                   ((uint32_t)buf[42] << 8) | (uint32_t)buf[43];
@@ -118,10 +155,18 @@ static void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
 
     server_addr = *ipaddr;
 
+    // Connect UDP pcb to server — reject datagrams from other sources
+    udp_connect(ntp_pcb, &server_addr, NTP_PORT);
+
     struct pbuf *p   = pbuf_alloc(PBUF_TRANSPORT, 48, PBUF_RAM);
     uint8_t     *req = (uint8_t *)p->payload;
     memset(req, 0, 48);
     req[0] = 0x1B; // LI=0, VN=3, Mode=3 (client)
+
+    // Generate random nonce and place in transmit timestamp (bytes 40-47)
+    uint64_t nonce = get_rand_64();
+    memcpy(&req[40], &nonce, 8);
+    memcpy(ntp_nonce, &req[40], 8); // save for origin check
 
     udp_sendto(ntp_pcb, p, &server_addr, NTP_PORT);
     pbuf_free(p);

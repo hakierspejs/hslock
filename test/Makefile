@@ -64,14 +64,14 @@ STORAGE_DEFS := -DLFS_NO_MALLOC -DLFS_NO_DEBUG
 
 # Commands harness: links serial/commands.c (the dispatcher) against SPY handler
 # stubs + a stub buzzer, all inside harness_commands.c. No real key/system/
-# network/backup handlers are pulled in — the harness drives commands_dispatch()
+# network/backup handlers are pulled in - the harness drives commands_dispatch()
 # and asserts routing / admin gating / argc validation / unknown handling. The
 # shared INCLUDES resolve stub/pico + hardware/buzzer.h.
 COMMANDS_SRCS := harness_commands.c $(ROOT)/serial/commands.c
 
 # Whole-codebase coverage: EVERY first-party .c, so the report lists the whole
 # firmware (the harness-exercised modules at their real %, the rest at an honest
-# 0%). These are compiled instrumented but NOT linked or run — a .gcno alone is
+# 0%). These are compiled instrumented but NOT linked or run - a .gcno alone is
 # enough for a file to appear in the report. The terse host stubs under stub/
 # stand in for the pico-sdk / cyw43 / lwip / mbedtls headers they pull.
 WHOLE_SRCS := $(ROOT)/hardware/buzzer.c $(ROOT)/hardware/clock.c \
@@ -179,7 +179,7 @@ $(BUILD)/vg_commands: $(COMMANDS_SRCS) | $(BUILD)
 # every first-party .c instrumented but unlinked (compile-only, producing .gcno
 # only). A --initial capture turns the whole .gcno set into a 0% baseline; the
 # run capture carries the executed lines; merging the two yields a report that
-# spans the whole firmware — the harness-exercised modules (base32/base64/
+# spans the whole firmware - the harness-exercised modules (base32/base64/
 # random/...) at their real %, every other first-party file at an honest 0%.
 # Everything outside the first-party tree (vendored libs, the harnesses, /usr)
 # is filtered out.

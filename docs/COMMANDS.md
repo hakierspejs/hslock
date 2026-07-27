@@ -43,7 +43,7 @@ Commands marked **admin** require `login` first.
 | `disable-key <id>` | admin | Disable key without deleting it |
 | `enable-key <id>` | admin | Re-enable a disabled key |
 | `delete-key <id>` | admin | Permanently delete a key |
-| `set-key-admin <id>` | admin | Grant admin flag — key's TOTP accepted by `login` |
+| `set-key-admin <id>` | admin | Grant admin flag - key's TOTP accepted by `login` |
 | `unset-key-admin <id>` | admin | Remove admin flag from key |
 
 ## Backup
@@ -51,10 +51,12 @@ Commands marked **admin** require `login` first.
 | Command | Access | Description |
 | --------- | -------- | ------------- |
 | `export-keys` | admin | Dump all keys as base64-encoded binary to serial |
-| `import-keys <base64>` | admin | Export current keys as backup, then overwrite with provided data |
+| `import-keys` | admin | Export current keys as backup, then prompt for base64 data to import. Paste data and send an empty line to commit. Times out after 60 seconds. |
+| `format-storage` | user* | Erase and reinitialise storage. Only available when storage has failed to mount. Requires typing `CONFIRM`. **Permanently deletes all keys.** |
 
 ## Notes
 
-- Key IDs must be in range **0–255**
+- Key IDs must be in range **0–128**
 - Admin session ends on `logout` or USB disconnect
-- Login is open (no TOTP required) when: no WiFi configured, no admin keys exist, or RTC not set after 5 minutes of uptime
+- Login is open (no TOTP required) when: no WiFi configured, no admin keys exist
+- `format-storage` is marked user* because it is only accessible when storage is unavailable — no admin keys can exist to authenticate against

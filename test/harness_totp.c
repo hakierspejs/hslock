@@ -2,15 +2,15 @@
  * Host harness: shared/totp.c (RFC 6238 TOTP, HMAC-SHA1, 6 digits, 30s step).
  *
  * Built against the REAL mbedtls (system libmbedcrypto) so the HMAC-SHA1 path
- * computes genuine codes — the compile-only stub in stub/mbedtls/md.h cannot.
+ * computes genuine codes - the compile-only stub in stub/mbedtls/md.h cannot.
  * clock_get_unix_time() is defined here (instead of linking hardware/clock.c,
  * which needs the RP2040 RTC) so the verify() time can be injected and the
  * vectors stay deterministic.
  *
  * Coverage of the two functions in totp.c:
- *   totp_at    — the standard RFC 6238 SHA1 test-vector table (seed
+ *   totp_at    - the standard RFC 6238 SHA1 test-vector table (seed
  *                "12345678901234567890"), asserting the exact 6-digit codes.
- *   totp_verify — RTC-not-set (unix_time==0) -> false; correct code accepted;
+ *   totp_verify - RTC-not-set (unix_time==0) -> false; correct code accepted;
  *                each of the T-1 / T / T+1 window steps accepted; a wrong code
  *                and an out-of-window code rejected.
  */

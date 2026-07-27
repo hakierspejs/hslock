@@ -9,12 +9,13 @@
 #include "hardware/led.h"
 #include "hardware/watchdog.h"
 
-#include "storage/storage.h"
-#include "shared/totp.h"
+#include "shared/fifo_protocol.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+
+#define FIFO_VERIFY_TIMEOUT_MS 2000
 
 // ---------------------------------------------------------------------------
 // Input buffer
@@ -41,13 +42,11 @@ static void input_clear(void) {
 
 static void process_input(void) {
     if (input_len < INPUT_MIN_LEN || input_len > INPUT_MAX_LEN) {
-        printf("[core1] invalid input length: %d\r\n", input_len);
         buzzer_play_fail();
         input_clear();
         return;
     }
 
-    // Split: last 6 digits = code, remainder = key ID
     int id_len = input_len - TOTP_CODE_LEN;
 
     char id_str[4]   = {0};
@@ -58,37 +57,36 @@ static void process_input(void) {
     uint16_t id   = (uint16_t)atoi(id_str);
     uint32_t code = (uint32_t)atoi(code_str);
 
-    printf("[core1] attempt: key=%u code=%s\r\n", id, code_str);
+    // Clear sensitive data from stack immediately
+    memset(code_str, 0, sizeof(code_str));
+    memset(input_buf, 0, sizeof(input_buf));
+    input_len = 0;
 
-    // Load key
-    key_record_t key;
-    if (!storage_key_get(id, &key) || !key.is_checksum_valid) {
-        printf("[core1] key %u: not found or corrupt\r\n", id);
-        buzzer_play_fail();
-        input_clear();
-        return;
+    // Send verify request to core 0 via FIFO
+    multicore_fifo_push_blocking((FIFO_MSG_VERIFY << 24) | (uint32_t)id);
+    multicore_fifo_push_blocking(code);
+
+    // Wait for verdict, feeding watchdog while waiting
+    absolute_time_t deadline = make_timeout_time_ms(FIFO_VERIFY_TIMEOUT_MS);
+    while (true) {
+        watchdog_update();
+        if (multicore_fifo_rvalid()) {
+            uint32_t result = multicore_fifo_pop_blocking();
+            if (result == FIFO_RESULT_GRANTED) {
+                buzzer_play_success();
+                latch_open();
+            } else {
+                buzzer_play_fail();
+            }
+            return;
+        }
+        if (time_reached(deadline)) {
+            printf("[core1] verify timeout\r\n");
+            buzzer_play_fail();
+            return;
+        }
+        sleep_ms(5);
     }
-
-    if (!key.is_enabled) {
-        printf("[core1] key %u: disabled\r\n", id);
-        buzzer_play_fail();
-        input_clear();
-        return;
-    }
-
-    // Verify TOTP
-    if (!totp_verify(key.secret, KEY_SECRET_LEN, code)) {
-        printf("[core1] key %u: invalid code\r\n", id);
-        buzzer_play_fail();
-        input_clear();
-        return;
-    }
-
-    // Access granted
-    printf("[core1] key %u (%s): access granted\r\n", id, key.name);
-    buzzer_play_success();
-    latch_open();
-    input_clear();
 }
 
 // ---------------------------------------------------------------------------

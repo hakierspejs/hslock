@@ -1,6 +1,7 @@
 #include "commands.h"
 #include "commands_handlers.h"
 #include "hardware/buzzer.h"
+#include "storage/storage.h"
 #include "pico/stdlib.h"
 #include <stdio.h>
 #include <string.h>
@@ -63,8 +64,9 @@ static const command_t COMMANDS[] = {
     {"set-key-admin", true, 1, 1, "set-key-admin <id>", "Grant admin flag to key"},
     {"unset-key-admin", true, 1, 1, "unset-key-admin <id>", "Remove admin flag from key"},
     {"export-keys", true, 0, 0, "export-keys", "Dump all keys as base64"},
-    {"import-keys", true, 1, 1, "import-keys <base64>",
-     "Export backup then overwrite with provided data"},
+    {"import-keys", true, 0, 0, "import-keys", "Export backup then overwrite with provided data"},
+    {"format-storage", false, 0, 0, "format-storage",
+     "Erase and reinitialise storage (recovery only)"},
 };
 
 #define NUM_COMMANDS (sizeof(COMMANDS) / sizeof(COMMANDS[0]))
@@ -96,7 +98,7 @@ static void (*const HANDLERS[])(int, char **) = {
     cmd_logout,      cmd_reboot,      cmd_get_time,       cmd_sync_ntp,      cmd_set_wifi,
     cmd_list_keys,   cmd_get_key,     cmd_get_key_secret, cmd_add_key,       cmd_rename_key,
     cmd_enable_key,  cmd_disable_key, cmd_delete_key,     cmd_set_key_admin, cmd_unset_key_admin,
-    cmd_export_keys, cmd_import_keys,
+    cmd_export_keys, cmd_import_keys, cmd_format_storage,
 };
 
 // ---------------------------------------------------------------------------
@@ -104,6 +106,16 @@ static void (*const HANDLERS[])(int, char **) = {
 // ---------------------------------------------------------------------------
 
 void commands_dispatch(int argc, char **argv) {
+    if (!storage_is_mounted()) {
+        bool allowed = strcmp(argv[0], "format-storage") == 0 || strcmp(argv[0], "help") == 0 ||
+                       strcmp(argv[0], "?") == 0;
+        if (!allowed) {
+            printf("error: storage unavailable - run 'format-storage'\r\n");
+            buzzer_play_command_ack();
+            return;
+        }
+    }
+
     for (size_t i = 0; i < NUM_COMMANDS; i++) {
         if (strcmp(argv[0], COMMANDS[i].name) != 0)
             continue;

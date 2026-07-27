@@ -12,8 +12,8 @@
 #include <time.h>
 
 void cmd_list_keys(int argc, char **argv) {
-    key_record_t keys[BACKUP_MAX_KEYS];
-    int          count = storage_key_list(keys, BACKUP_MAX_KEYS);
+    static key_record_t keys[BACKUP_MAX_KEYS];
+    int                 count = storage_key_list(keys, BACKUP_MAX_KEYS);
 
     if (count < 0) {
         printf("error: failed to read keys\r\n");
@@ -88,7 +88,7 @@ void cmd_get_key(int argc, char **argv) {
 
 // Łódź URL-encoded: Ł=%C5%81, ó=%C3%B3, ź=%C5%BA, space=%20
 #define ISSUER_ENC     "Hackerspejs%20%C5%81%C3%B3d%C5%BA"
-#define QR_BORDER      2 // quiet zone — required for scanners to work
+#define QR_BORDER      2 // quiet zone - required for scanners to work
 #define SECRET_B32_LEN BASE32_ENCODED_LEN(KEY_SECRET_LEN) // 33 bytes for 20-byte secret
 
 void cmd_get_key_secret(int argc, char **argv) {

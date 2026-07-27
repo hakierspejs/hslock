@@ -20,6 +20,9 @@
 
 #include "storage/storage.h"
 
+#include "shared/fifo_protocol.h"
+#include "shared/totp.h"
+
 static void boot_network(void) {
     wifi_config_t cfg;
     if (!storage_wifi_get(&cfg)) {
@@ -48,6 +51,37 @@ static void boot_network(void) {
     printf("[main] NTP sync ok\r\n");
 }
 
+static void core0_handle_fifo(void) {
+    if (!multicore_fifo_rvalid())
+        return;
+
+    uint32_t word1 = multicore_fifo_pop_blocking();
+    uint8_t  msg   = (word1 >> 24) & 0xFF;
+
+    if (msg == FIFO_MSG_VERIFY) {
+        uint16_t id   = (uint16_t)(word1 & 0xFFFF);
+        uint32_t code = multicore_fifo_pop_blocking();
+
+        uint32_t result = FIFO_RESULT_DENIED;
+
+        key_record_t key;
+        if (!storage_key_get(id, &key)) {
+            printf("[door] key %u: not found\r\n", id);
+        } else if (!key.is_checksum_valid) {
+            printf("[door] key %u: corrupt\r\n", id);
+        } else if (!key.is_enabled) {
+            printf("[door] key %u: disabled\r\n", id);
+        } else if (!totp_verify(key.secret, KEY_SECRET_LEN, code)) {
+            printf("[door] key %u: invalid code\r\n", id);
+        } else {
+            printf("[door] key %u (%s): granted\r\n", id, key.name);
+            result = FIFO_RESULT_GRANTED;
+        }
+
+        multicore_fifo_push_blocking(result);
+    }
+}
+
 int main(void) {
     stdio_init_all();
 
@@ -64,7 +98,18 @@ int main(void) {
     multicore_launch_core1(main1);
     multicore_fifo_pop_blocking(); // wait for core 1 ready signal
 
-    storage_init();
+    bool storage_ok = storage_init();
+    if (!storage_ok) {
+        printf("[main] *** STORAGE FAILURE - recovery mode ***\r\n");
+        printf("[main] use 'format-storage' to erase and reinitialise\r\n");
+        printf("[main] WARNING: this will permanently delete ALL keys\r\n");
+        for (int i = 0; i < 5; i++) {
+            buzzer_beep_long();
+            sleep_ms(100);
+            buzzer_beep_long();
+            sleep_ms(500);
+        }
+    }
 
     boot_network();
 
@@ -74,6 +119,7 @@ int main(void) {
     console_init();
 
     while (true) {
+        core0_handle_fifo();
         console_task();
         wifi_task();
         ntp_task();

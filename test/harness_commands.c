@@ -1,10 +1,10 @@
-// Host harness for serial/commands.c — the command dispatcher.
+// Host harness for serial/commands.c - the command dispatcher.
 //
 // commands.c is a self-contained dispatch layer: given a pre-tokenized
 // argc/argv (the tokenizer itself lives in serial/console.c, not here), it
 // does a linear name lookup in COMMANDS[], enforces admin gating, validates
 // the argument count against each command's [min_args, max_args], and routes
-// to the matching handler — or prints an error for unknown commands.
+// to the matching handler - or prints an error for unknown commands.
 //
 // We link commands.c against SPY handler stubs (one per command, recording the
 // last routed handler + argc) and a stub buzzer, then drive commands_dispatch()
@@ -141,7 +141,7 @@ static void test_routes_public_command(void) {
 
 static void test_help_and_alias_route_same_handler(void) {
     // "help" and its "?" alias both map to cmd_help (static, inside commands.c).
-    // cmd_help is not a spy — it runs in commands.c and acks the buzzer once.
+    // cmd_help is not a spy - it runs in commands.c and acks the buzzer once.
     admin_mode = false;
     run("help", (const char *)NULL);
     assert(g_last_handler == NULL); // internal handler, no spy
@@ -221,7 +221,7 @@ static void test_argc_exact_ok(void) {
 }
 
 static void test_admin_command_with_args_routes_when_admin(void) {
-    // "add-key <id> <name>" — admin-only, exactly 2 args. Exercises the admin
+    // "add-key <id> <name>" - admin-only, exactly 2 args. Exercises the admin
     // gate PASS + argc PASS + route path together.
     admin_mode = true;
     run("add-key", "5", "frontdoor", (const char *)NULL);
@@ -246,7 +246,7 @@ static void test_on_disconnect_clears_admin(void) {
     commands_on_disconnect(); // must clear admin + print notice
     assert(!admin_mode);
     assert(!commands_is_admin());
-    // Second call is a no-op (admin already false) — exercises the false branch.
+    // Second call is a no-op (admin already false) - exercises the false branch.
     commands_on_disconnect();
     assert(!commands_is_admin());
 }

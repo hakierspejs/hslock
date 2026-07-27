@@ -34,4 +34,6 @@ void cmd_unset_key_admin(int argc, char **argv);
 void cmd_export_keys(int argc, char **argv);
 void cmd_import_keys(int argc, char **argv);
 
+void cmd_format_storage(int argc, char **argv);
+
 #endif

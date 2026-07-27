@@ -42,6 +42,7 @@ static key_record_t to_key_record(const backup_key_t *b) {
     k.created_at        = b->created_at;
     k.is_checksum_valid = true;
     memcpy(k.name, b->name, sizeof(k.name));
+    k.name[KEY_NAME_MAX - 1] = '\0';
     memcpy(k.secret, b->secret, sizeof(k.secret));
     return k;
 }
@@ -121,6 +122,21 @@ bool backup_import(const uint8_t *buf, size_t size) {
     if (hdr->checksum != expected_crc) {
         printf("[backup] import: backup checksum mismatch\r\n");
         return false;
+    }
+
+    // Validate all names are NUL-terminated before touching storage
+    for (uint32_t i = 0; i < hdr->key_count; i++) {
+        bool terminated = false;
+        for (int j = 0; j < KEY_NAME_MAX; j++) {
+            if (keys[i].name[j] == '\0') {
+                terminated = true;
+                break;
+            }
+        }
+        if (!terminated) {
+            printf("[backup] import: key %u has unterminated name\r\n", keys[i].id);
+            return false;
+        }
     }
 
     // Checksum valid - delete existing keys

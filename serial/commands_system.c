@@ -5,6 +5,7 @@
 #include "hardware/light.h"
 #include "hardware/led.h"
 #include "hardware/watchdog.h"
+#include "hardware/structs/scb.h"
 #include "network/ntp.h"
 #include "storage/backup.h"
 #include "storage/storage.h"
@@ -16,6 +17,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
+#include <string.h>
 
 // if RTC for some reason fails to initialise, allow login after 5 minutes
 #define BOOT_BYPASS_WINDOW_US (5ULL * 60 * 1000000)
@@ -58,9 +60,9 @@ void cmd_status(int argc, char **argv) {
     }
 
     // Keys
-    key_record_t keys[BACKUP_MAX_KEYS];
-    int          count   = storage_key_list(keys, BACKUP_MAX_KEYS);
-    int          enabled = 0, corrupt = 0;
+    static key_record_t keys[BACKUP_MAX_KEYS];
+    int                 count   = storage_key_list(keys, BACKUP_MAX_KEYS);
+    int                 enabled = 0, corrupt = 0;
     for (int i = 0; i < count; i++) {
         if (!keys[i].is_checksum_valid)
             corrupt++;
@@ -118,8 +120,8 @@ void cmd_login(int argc, char **argv) {
     uint32_t code = (uint32_t)strtoul(argv[2], NULL, 10);
 
     // Check if any admin keys exist
-    key_record_t keys[BACKUP_MAX_KEYS];
-    int          count = storage_key_list(keys, BACKUP_MAX_KEYS);
+    static key_record_t keys[BACKUP_MAX_KEYS];
+    int                 count = storage_key_list(keys, BACKUP_MAX_KEYS);
 
     bool any_admin = false;
     for (int i = 0; i < count; i++) {
@@ -129,20 +131,27 @@ void cmd_login(int argc, char **argv) {
         }
     }
 
-    // No wifi configured — allow login (device needs to be set up)
+    // Storage must be working - never grant access if we can't trust our own data
+    if (!storage_is_mounted()) {
+        printf("error: storage unavailable\r\n");
+        buzzer_play_auth_error();
+        return;
+    }
+
+    // No wifi configured - allow login (device needs to be set up)
     wifi_config_t wifi;
-    if (!storage_wifi_get(&wifi)) {
-        printf("warning: wifi not configured — open mode\r\n");
+    if (storage_is_mounted() && !storage_wifi_get(&wifi)) {
+        printf("warning: wifi not configured - open mode\r\n");
         admin_mode = true;
         printf("login: admin mode enabled\r\n");
         buzzer_play_command_ack();
         return;
     }
 
-    // RTC not initialised — NTP never synced
+    // RTC not initialised - NTP never synced
     if (clock_get_unix_time() == 0) {
         if (time_us_64() >= BOOT_BYPASS_WINDOW_US) {
-            printf("warning: RTC not set — open mode\r\n");
+            printf("warning: RTC not set - open mode\r\n");
             admin_mode = true;
             printf("login: admin mode enabled\r\n");
             buzzer_play_command_ack();
@@ -155,9 +164,9 @@ void cmd_login(int argc, char **argv) {
         return;
     }
 
-    // No admin keys — allow any credentials (bootstrap mode)
+    // No admin keys - allow any credentials (bootstrap mode)
     if (!any_admin) {
-        printf("warning: no admin keys configured — bootstrap mode\r\n");
+        printf("warning: no admin keys configured - bootstrap mode\r\n");
         admin_mode = true;
         printf("login: admin mode enabled\r\n");
         buzzer_play_command_ack();
@@ -199,7 +208,59 @@ void cmd_logout(int argc, char **argv) {
 void cmd_reboot(int argc, char **argv) {
     printf("rebooting...\r\n");
     buzzer_play_command_ack();
-    watchdog_reboot(0, 0, 100);
+    sleep_ms(200); // let printf flush
+    // Direct system reset — bypasses watchdog entirely
+    hw_set_bits(&scb_hw->aircr, M0PLUS_AIRCR_SYSRESETREQ_BITS);
     while (true)
         tight_loop_contents();
+}
+
+void cmd_format_storage(int argc, char **argv) {
+    if (storage_is_mounted()) {
+        printf("error: storage is working fine - format refused\r\n");
+        printf("use 'export-keys' + 'reboot' + 'format-storage' if you really want this\r\n");
+        buzzer_play_command_ack();
+        return;
+    }
+
+    printf("*** WARNING: this will permanently delete ALL keys ***\r\n");
+    printf("type CONFIRM to proceed: ");
+    fflush(stdout);
+
+    char            confirm[10] = {0};
+    int             len         = 0;
+    absolute_time_t deadline    = make_timeout_time_ms(15000);
+
+    while (!time_reached(deadline) && len < 7) {
+        int c = getchar_timeout_us(0);
+        if (c == PICO_ERROR_TIMEOUT) {
+            sleep_ms(10);
+            continue;
+        }
+        if (c == '\r' || c == '\n') {
+            printf("\r\n");
+            break;
+        }
+        putchar(c);
+        fflush(stdout);
+        confirm[len++] = (char)c;
+    }
+
+    if (strncmp(confirm, "CONFIRM", 7) != 0) {
+        printf("error: aborted\r\n");
+        buzzer_play_command_ack();
+        return;
+    }
+
+    printf("formatting...\r\n");
+    if (storage_format()) {
+        printf("done - rebooting\r\n");
+        buzzer_play_boot();
+        watchdog_reboot(0, 0, 500);
+        while (true)
+            tight_loop_contents();
+    } else {
+        printf("error: format failed - hardware may be dead\r\n");
+        buzzer_play_auth_error();
+    }
 }
