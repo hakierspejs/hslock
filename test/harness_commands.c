@@ -51,6 +51,15 @@ void buzzer_play_command_ack(void) {
     g_buzzer_acks++;
 }
 
+// commands_dispatch() gates every line on storage_is_mounted() (real impl lives
+// in storage/storage.c, which we don't link here). Report "mounted" so dispatch
+// falls through to the normal name-lookup/admin/argc paths these tests exercise;
+// returning false would divert public commands like "status" into the
+// storage-unavailable reject branch and defeat the routing assertions.
+bool storage_is_mounted(void) {
+    return true;
+}
+
 // One spy per real handler prototype in commands_handlers.h. Each records that
 // it was the routed handler; commands.c only ever calls the one it looked up.
 #define SPY(fn)                                                                                    \
@@ -80,6 +89,7 @@ SPY(cmd_set_key_admin)
 SPY(cmd_unset_key_admin)
 SPY(cmd_export_keys)
 SPY(cmd_import_keys)
+SPY(cmd_format_storage)
 
 // ---------------------------------------------------------------------------
 // Dispatch driver with stdout capture

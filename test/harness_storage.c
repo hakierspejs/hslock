@@ -105,9 +105,17 @@ int main(void) {
     assert(storage_wifi_set(&wtmp) == false);
     assert(storage_wifi_clear() == false);
 
-    /* --- init on fresh 0xFF flash: mount fails -> format -> mount ---------- */
+    /* --- init on fresh 0xFF flash: mount fails; explicit format recovers --- */
+    // storage_init() no longer auto-formats a corrupt/blank device (recovery is
+    // now operator-driven via the "format-storage" console command). On fresh
+    // 0xFF flash the mount fails and init reports failure; storage_format() is
+    // the explicit recovery path that formats and re-mounts.
     flash_ram_map();
-    assert(storage_init() == true);
+    assert(storage_is_mounted() == false);
+    assert(storage_init() == false);
+    assert(storage_is_mounted() == false);
+    assert(storage_format() == true);
+    assert(storage_is_mounted() == true);
 
     /* --- key save/get roundtrip ------------------------------------------- */
     key_record_t k1 = make_key(1, "alice", true, true, 1700000000u, 0x10);
