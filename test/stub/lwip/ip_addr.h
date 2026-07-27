@@ -11,4 +11,7 @@ typedef struct {
 
 #define IPADDR_TYPE_ANY 0
 
+/* lwip compares addresses by value; mirror that so ntp.c's source check builds. */
+#define ip_addr_cmp(addr1, addr2) ((addr1)->addr == (addr2)->addr)
+
 #endif
