@@ -158,8 +158,13 @@ static void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
     // Connect UDP pcb to server — reject datagrams from other sources
     udp_connect(ntp_pcb, &server_addr, NTP_PORT);
 
-    struct pbuf *p   = pbuf_alloc(PBUF_TRANSPORT, 48, PBUF_RAM);
-    uint8_t     *req = (uint8_t *)p->payload;
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, 48, PBUF_RAM);
+    if (!p) {
+        printf("[ntp] pbuf_alloc failed\r\n");
+        ntp_state = NTP_STATE_FAILED;
+        return;
+    }
+    uint8_t *req = (uint8_t *)p->payload;
     memset(req, 0, 48);
     req[0] = 0x1B; // LI=0, VN=3, Mode=3 (client)
 

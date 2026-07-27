@@ -145,6 +145,14 @@ bool backup_import(const uint8_t *buf, size_t size) {
         }
     }
 
+    // Validate all key IDs are in range
+    for (uint32_t i = 0; i < hdr->key_count; i++) {
+        if (keys[i].id > KEY_ID_MAX) {
+            printf("[backup] import: key %u has invalid id (max %u)\r\n", keys[i].id, KEY_ID_MAX);
+            return false;
+        }
+    }
+
     // Checksum valid - delete existing keys
     static key_record_t existing[BACKUP_MAX_KEYS];
     int                 existing_count = storage_key_list(existing, BACKUP_MAX_KEYS);
