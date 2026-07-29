@@ -43,8 +43,24 @@ static uint8_t *flash_ptr(uint32_t flash_offs) {
 
 /* --- RAM-backed flash primitives storage.c drives ------------------------- */
 
+/* M13 witness: while a delete is in progress, record the longest run of zero
+ * bytes seen in any single program buffer. storage_key_delete's zero-overwrite
+ * commits the record's inline data as zeros, so a run >= KEY_SECRET_LEN proves
+ * the secret field was scrubbed before removal; a plain lfs_remove (no fix)
+ * only programs a small delete tag and never produces such a run. */
+static volatile int    g_delete_active    = 0;
+static volatile size_t g_del_max_zero_run = 0;
+
 void flash_range_program(uint32_t flash_offs, const uint8_t *data, size_t count) {
     uint8_t *dst = flash_ptr(flash_offs);
+    if (g_delete_active) {
+        size_t run = 0;
+        for (size_t i = 0; i < count; i++) {
+            run = (data[i] == 0) ? run + 1 : 0;
+            if (run > g_del_max_zero_run)
+                g_del_max_zero_run = run;
+        }
+    }
     for (size_t i = 0; i < count; i++)
         dst[i] &= data[i]; /* NOR: programming can only clear bits */
 }
@@ -69,6 +85,16 @@ static void flash_ram_map(void) {
     }
     assert((uintptr_t)base == STORAGE_WINDOW_BASE);
     memset(base, 0xFF, STORAGE_SIZE_BYTES); /* fresh, fully-erased flash */
+}
+
+/* Scan the whole storage window for `pat` — used to prove a secret is NOT
+ * sitting in cleartext anywhere in flash. */
+static bool window_contains(const uint8_t *pat, size_t n) {
+    const uint8_t *w = flash_ptr(STORAGE_FLASH_OFFSET);
+    for (size_t i = 0; i + n <= STORAGE_SIZE_BYTES; i++)
+        if (memcmp(w + i, pat, n) == 0)
+            return true;
+    return false;
 }
 
 /* --- helpers -------------------------------------------------------------- */
@@ -285,6 +311,43 @@ int main(void) {
         assert(g.is_admin == true);   /* canonicalised: exactly 1, not 67 */
         assert(g.is_enabled == true); /* untouched flag survives */
         assert(storage_key_delete(9) == true);
+    }
+
+    /* --- M13: delete-key zero-overwrites the record before unlinking ------- */
+    /* storage_key_delete must overwrite the record's bytes with zeros and
+     * lfs_file_sync BEFORE lfs_remove, so the NEWEST inline value of the revoked
+     * key is zeros, not its secret.
+     *
+     * Note on what CANNOT be asserted: littlefs is an append-only log. The
+     * zero-overwrite commits a NEW inline copy; the ORIGINAL secret bytes stay
+     * physically in the metadata block pair until it is compacted and the stale
+     * sector erased — so a raw window scan still finds the plaintext seed right
+     * after delete (verified: window_contains stays true). Only storage_format()
+     * guarantees erasure. Asserting the seed is physically gone would therefore
+     * be false; we instead witness the fix directly: during the delete, the
+     * flash-program shim records the longest zero run it programs, and the
+     * zero-overwrite of the KEY_SECRET_LEN-byte secret field (in fact the whole
+     * record) produces a run >= KEY_SECRET_LEN. A plain lfs_remove (no fix) only
+     * programs a small delete tag and never does (measured: 2 bytes vs 48). */
+    {
+        uint8_t del_seed[KEY_SECRET_LEN];
+        for (int i = 0; i < KEY_SECRET_LEN; i++)
+            del_seed[i] = (uint8_t)(0x3C ^ (i * 5 + 1));
+        key_record_t vk = make_key(42, "victim", true, false, 1700111111u, 0);
+        memcpy(vk.secret, del_seed, sizeof del_seed);
+        assert(storage_key_save(&vk) == true);
+        assert(window_contains(del_seed, sizeof del_seed) == true); /* seed on flash */
+
+        g_del_max_zero_run = 0;
+        g_delete_active    = 1;
+        assert(storage_key_delete(42) == true);
+        g_delete_active = 0;
+
+        /* the record's inline data was scrubbed to zeros before removal */
+        assert(g_del_max_zero_run >= (size_t)KEY_SECRET_LEN);
+        /* the current filesystem value is gone (remove committed) */
+        assert(storage_key_exists(42) == false);
+        assert(storage_key_get(42, &tmp) == false);
     }
 
     printf("storage OK\n");

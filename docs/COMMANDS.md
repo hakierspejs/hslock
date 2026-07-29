@@ -60,3 +60,4 @@ Commands marked **admin** require `login` first.
 - Admin session ends on `logout` or USB disconnect
 - Login is open (no TOTP required) when: no WiFi configured, no admin keys exist
 - `format-storage` is marked user* because it is only accessible when storage is unavailable — no admin keys can exist to authenticate against
+- `delete-key` overwrites the record with zeros before unlinking it, so the key's current on-flash value is no longer its secret. However, littlefs is an append-only log: stale copies written by earlier `add-key` / `rename-key` / `enable-key` / `disable-key` / `set-key-admin` operations can linger in flash until their block is compacted and erased. **Only `format-storage` guarantees erasure of all key material.**
