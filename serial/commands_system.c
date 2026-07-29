@@ -21,9 +21,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// if RTC for some reason fails to initialise, allow login after 5 minutes
-#define BOOT_BYPASS_WINDOW_US (5ULL * 60 * 1000000)
-
 void cmd_status(int argc, char **argv) {
     // Mode + build
     printf("mode:      %s\r\n", admin_mode ? "admin" : "user");
@@ -128,7 +125,21 @@ void cmd_login(int argc, char **argv) {
     uint16_t id   = (uint16_t)strtoul(argv[1], NULL, 10);
     uint32_t code = (uint32_t)strtoul(argv[2], NULL, 10);
 
-    // Check if any admin keys exist
+    // Storage must be working - never grant access if we can't trust our own
+    // data. Fail closed.
+    if (!storage_is_mounted()) {
+        printf("error: storage unavailable\r\n");
+        buzzer_play_auth_error();
+        return;
+    }
+
+    // Scan for any enabled, valid admin key. Its mere existence means the
+    // device is provisioned: from this point on ONLY a matching key id + TOTP
+    // code may enter admin mode. No absent-config and no absent-time condition
+    // may bypass the credential check - the login path fails closed. In
+    // particular an unset RTC is never an escalation (totp_verify below reads
+    // the clock and simply fails while time is unknown), and a missing wifi
+    // config is not a reason to open up.
     static key_record_t keys[BACKUP_MAX_KEYS];
     int                 count = storage_key_list(keys, BACKUP_MAX_KEYS);
 
@@ -143,53 +154,21 @@ void cmd_login(int argc, char **argv) {
     // (seeds included) from BSS before any of the branches below returns.
     secure_wipe(keys, sizeof(keys));
 
-    // Storage must be working - never grant access if we can't trust our own data
-    if (!storage_is_mounted()) {
-        printf("error: storage unavailable\r\n");
-        buzzer_play_auth_error();
-        return;
-    }
-
-    // No wifi configured - allow login (device needs to be set up)
-    wifi_config_t wifi;
-    if (storage_is_mounted() && !storage_wifi_get(&wifi)) {
-        printf("warning: wifi not configured - open mode\r\n");
-        admin_mode = true;
-        printf("login: admin mode enabled\r\n");
-        buzzer_play_command_ack();
-        return;
-    }
-    // On the fall-through path wifi holds the configured SSID/password; it is
-    // only needed for the presence check above, so scrub the credentials.
-    secure_wipe(&wifi, sizeof(wifi));
-
-    // RTC not initialised - NTP never synced
-    uint32_t now_unix;
-    if (!clock_get_unix_time(&now_unix)) {
-        if (time_us_64() >= BOOT_BYPASS_WINDOW_US) {
-            printf("warning: RTC not set - open mode\r\n");
-            admin_mode = true;
-            printf("login: admin mode enabled\r\n");
-            buzzer_play_command_ack();
-        } else {
-            uint64_t remaining_us = BOOT_BYPASS_WINDOW_US - time_us_64();
-            uint32_t remaining_s  = (uint32_t)(remaining_us / 1000000ULL);
-            printf("error: RTC not set, try again in %us\r\n", remaining_s);
-            buzzer_play_auth_error();
-        }
-        return;
-    }
-
-    // No admin keys - allow any credentials (bootstrap mode)
+    // Unprovisioned device: no admin credential exists yet, so none can be
+    // required. Grant a bootstrap/provisioning session so an operator can add
+    // the first admin key. This path is gated strictly on any_admin == false
+    // and closes automatically the moment an enabled admin key exists (adding
+    // it flips any_admin to true above), so it is effectively one-shot
+    // provisioning rather than a persistent fail-open state.
     if (!any_admin) {
-        printf("warning: no admin keys configured - bootstrap mode\r\n");
+        printf("warning: no admin keys configured - provisioning mode\r\n");
         admin_mode = true;
         printf("login: admin mode enabled\r\n");
         buzzer_play_command_ack();
         return;
     }
 
-    // Load requested key
+    // Provisioned device: credentials are mandatory. Load the requested key.
     key_record_t key;
     if (!storage_key_get(id, &key)) {
         printf("error: invalid credentials\r\n");
