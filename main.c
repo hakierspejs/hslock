@@ -20,8 +20,11 @@
 
 #include "storage/storage.h"
 
-#include "shared/fifo_protocol.h"
+#include "hardware/sync.h"
+#include "shared/door_verify.h"
 #include "shared/totp.h"
+
+door_verify_mailbox_t door_verify_mailbox;
 
 static void boot_network(void) {
     wifi_config_t cfg;
@@ -38,8 +41,6 @@ static void boot_network(void) {
         return;
     }
 
-    ntp_init();
-
     // Block until first NTP sync succeeds - beep + retry on failure
     printf("[main] waiting for NTP sync...\r\n");
     while (!ntp_sync()) {
@@ -51,35 +52,38 @@ static void boot_network(void) {
     printf("[main] NTP sync ok\r\n");
 }
 
-static void core0_handle_fifo(void) {
-    if (!multicore_fifo_rvalid())
+static void core0_handle_door_verify(void) {
+    static uint32_t last_handled_seq = 0;
+
+    uint32_t seq = door_verify_mailbox.request_seq;
+    if (seq == last_handled_seq)
         return;
 
-    uint32_t word1 = multicore_fifo_pop_blocking();
-    uint8_t  msg   = (word1 >> 24) & 0xFF;
+    __dmb(); // request_seq visible => request_id/request_code are too
+    uint16_t id   = door_verify_mailbox.request_id;
+    uint32_t code = door_verify_mailbox.request_code;
 
-    if (msg == FIFO_MSG_VERIFY) {
-        uint16_t id   = (uint16_t)(word1 & 0xFFFF);
-        uint32_t code = multicore_fifo_pop_blocking();
+    bool granted = false;
 
-        uint32_t result = FIFO_RESULT_DENIED;
-
-        key_record_t key;
-        if (!storage_key_get(id, &key)) {
-            printf("[door] key %u: not found\r\n", id);
-        } else if (!key.is_checksum_valid) {
-            printf("[door] key %u: corrupt\r\n", id);
-        } else if (!key.is_enabled) {
-            printf("[door] key %u: disabled\r\n", id);
-        } else if (!totp_verify(key.secret, KEY_SECRET_LEN, code)) {
-            printf("[door] key %u: invalid code\r\n", id);
-        } else {
-            printf("[door] key %u (%s): granted\r\n", id, key.name);
-            result = FIFO_RESULT_GRANTED;
-        }
-
-        multicore_fifo_push_blocking(result);
+    key_record_t key;
+    if (!storage_key_get(id, &key)) {
+        printf("[door] key %u: not found\r\n", id);
+    } else if (!key.is_checksum_valid) {
+        printf("[door] key %u: corrupt\r\n", id);
+    } else if (!key.is_enabled) {
+        printf("[door] key %u: disabled\r\n", id);
+    } else if (!totp_verify(key.secret, KEY_SECRET_LEN, code)) {
+        printf("[door] key %u: invalid code\r\n", id);
+    } else {
+        printf("[door] key %u (%s): granted\r\n", id, key.name);
+        granted = true;
     }
+
+    door_verify_mailbox.response_granted = granted;
+    __dmb(); // response_granted visible before the seq that vouches for it
+    door_verify_mailbox.response_seq = seq;
+
+    last_handled_seq = seq;
 }
 
 int main(void) {
@@ -111,6 +115,11 @@ int main(void) {
         }
     }
 
+    // Must run every boot, independent of whether WiFi/storage are available -
+    // it configures the RTC's clock divider, and without it the RTC free-runs
+    // at its uninitialised (much faster than 1Hz) rate.
+    ntp_init();
+
     boot_network();
 
     // Startup beep - signals boot completed
@@ -119,7 +128,7 @@ int main(void) {
     console_init();
 
     while (true) {
-        core0_handle_fifo();
+        core0_handle_door_verify();
         console_task();
         wifi_task();
         ntp_task();

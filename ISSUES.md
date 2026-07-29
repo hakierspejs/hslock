@@ -67,6 +67,7 @@ once the clock is trustworthy, but not required by this decision.
 - **[verify-on-hw]** — the code path is confirmed, but impact depends on Pico SDK or
   silicon behaviour that could not be exercised here (the ARM toolchain and
   `PICO_SDK_PATH` are absent). Confirm on a device.
+- **[fixed]** — confirmed on hardware and remediated; kept here for history.
 
 The two bugs recorded in `test/FUZZING.md` (littlefs `lookahead_size` overflow,
 `to_key_record` non-bool load) were re-checked and are still fixed. Not listed.
@@ -75,7 +76,13 @@ The two bugs recorded in `test/FUZZING.md` (littlefs `lookahead_size` overflow,
 
 ## CRITICAL
 
-### C1 — Keypad verdicts are discarded by the SDK lockout IRQ handler — the door may never open **[A · availability]** [verify-on-hw]
+### C1 — Keypad verdicts are discarded by the SDK lockout IRQ handler — the door may never open **[A · availability]** [fixed]
+
+**Confirmed on hardware: a correct keypad code did not open the door.** Fixed together
+with C2 below by replacing the core1→core0→core1 FIFO messages with a lock-free
+shared-memory mailbox (`shared/door_verify.h`) that never touches the SIO FIFO
+`multicore_lockout_victim_init()` claims. `multicore_lockout_victim_init()` itself is
+kept (`core1.c`) since `flash_safe_execute` still needs it.
 
 `core1.c:97` calls `multicore_lockout_victim_init()`, then `core1.c:71-82` waits for
 core 0's verdict by *polling* `multicore_fifo_rvalid()` in thread mode.
@@ -99,13 +106,20 @@ This predicts a failure obvious enough that you would likely have noticed it, so
 **test this first**. If the keypad does work on hardware, the premise is wrong
 somewhere and C2 becomes the live concern.
 
-- [ ] Verify on hardware whether a correct keypad code opens the door.
-- [ ] Stop using the inter-core FIFO for application messaging. Use a shared-memory
+- [x] Verify on hardware whether a correct keypad code opens the door. Confirmed broken.
+- [x] Stop using the inter-core FIFO for application messaging. Use a shared-memory
       mailbox (`volatile` slots + sequence numbers, or `queue_t` from `pico_util`), or
       a `hardware_spinlock` + `__dmb()` handshake. Keep
       `multicore_lockout_victim_init()` — `flash_safe_execute` requires it.
 
-### C2 — A stale verdict opens the door for any digits typed at the keypad **[A]** [verified]
+### C2 — A stale verdict opens the door for any digits typed at the keypad **[A]** [fixed]
+
+Fixed together with C1: `shared/door_verify.h`'s mailbox carries a monotonically
+increasing per-attempt sequence number that is never reused. `core1.c` only accepts a
+response whose `response_seq` echoes the exact `request_seq` of the attempt currently
+waiting, so a late/stale reply for an earlier attempt can never be mistaken for the
+verdict on a later one. The old fixed-size raw-FIFO word framing (and its missing
+`else`) no longer exists, so that desync class is gone structurally rather than patched.
 
 `shared/fifo_protocol.h:12-13` makes the verdict a bare `0x00`/`0x01` — no sequence
 number, no key-id echo, no message tag. `core1.c:83-87` gives up on timeout **without
@@ -134,11 +148,11 @@ permanently.
 Currently masked by C1 — which is why these must be fixed **together**. Fixing verdict
 delivery alone converts this into a live bypass.
 
-- [ ] Carry a 16-bit nonce in the request; require the reply to echo it plus a
-      `FIFO_MSG_RESULT` tag.
-- [ ] Flush any stale reply before pushing a new request; on timeout, mark verdicts for
-      that nonce void.
-- [ ] Add the missing `else` on core 0 to resynchronise framing.
+- [x] Carry a nonce in the request; require the reply to echo it (32-bit `request_seq` /
+      `response_seq`, not a separate message tag - see `shared/door_verify.h`).
+- [x] Stale replies are structurally void: each attempt gets a new sequence number, so a
+      reply matching an old one is never mistaken for the current attempt's verdict.
+- [x] No FIFO framing remains to resynchronise - moot after the mailbox rewrite.
 
 ### C3 — Clock rewind replays an old code at the keypad **[A+B]** [verified]
 
@@ -256,7 +270,7 @@ of rollback per ~30 s, feeding C3.
 
 `main.c:43-49` loops unbounded until the first NTP sync. `console_init()` and the service
 loop are at `main.c:119-127`, i.e. *after* `boot_network()`. So while NTP is blocked:
-`core0_handle_fifo()` never runs (every keypad entry hits core 1's 2 s timeout — **door
+`core0_handle_door_verify()` never runs (every keypad entry hits core 1's 2 s timeout — **door
 dead**) and `console_task()` never runs, so there is no recovery path even from inside.
 
 The watchdog does not help: `watchdog_enable(8000, true)` at `main.c:95`, but
@@ -738,11 +752,11 @@ future writer turns it into an over-read of the password into the SSID print.
 ### L9 — 60 s blocking paste loop starves the keypad **[C causes A-side outage]** [verified]
 
 `commands_backup.c:43-65` spins for up to 60 s on core 0, the only servicer of
-`core0_handle_fifo` — so every keypad unlock attempt fails for that whole window (core 1
+`core0_handle_door_verify` — so every keypad unlock attempt fails for that whole window (core 1
 gives up after 2 s). `cmd_format_storage` has the same shape with 15 s. Admin-gated and
 self-clearing, but see H5 for the reboot-loop variant.
 
-- [ ] Drop the timeout to ~10 s, or pump `core0_handle_fifo()` inside the loop.
+- [ ] Drop the timeout to ~10 s, or pump `core0_handle_door_verify()` inside the loop.
 
 ### L10 — Parallel `COMMANDS`/`HANDLERS` arrays with a dead `handler` field [verified]
 

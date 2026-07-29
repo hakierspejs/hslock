@@ -9,7 +9,11 @@
 #define NTP_TIMEOUT_S          15        // per-sync timeout
 #define NTP_ROLLBACK_EPSILON_S 60        // max allowed backward correction
 
-// Call once after WiFi connected - initialises RTC
+// Call once at boot, before any WiFi/storage checks - initialises the RTC.
+// Must not be gated on WiFi/storage availability: the RTC's clock divider is
+// configured here, and any rtc_set_datetime()/rtc_get_datetime() call before
+// this runs uses an unconfigured divider, causing the RTC to free-run far
+// faster than 1Hz.
 void ntp_init(void);
 
 // Perform NTP sync. Blocks until done or timeout.

@@ -19,8 +19,10 @@ void buzzer_play_command_ack();
 void buzzer_play_auth_error();
 void buzzer_play_ntp_sync_error();
 
-void buzzer_play_success(void);
-void buzzer_play_fail(void);
-void buzzer_play_doorbell(void);
+void buzzer_play_success();
+void buzzer_play_fail();
+void buzzer_play_doorbell();
+
+void buzzer_play_door_open();
 
 #endif

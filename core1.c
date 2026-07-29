@@ -7,9 +7,10 @@
 #include "hardware/keypad.h"
 #include "hardware/latch.h"
 #include "hardware/led.h"
+#include "hardware/sync.h"
 #include "hardware/watchdog.h"
 
-#include "shared/fifo_protocol.h"
+#include "shared/door_verify.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -62,19 +63,30 @@ static void process_input(void) {
     memset(input_buf, 0, sizeof(input_buf));
     input_len = 0;
 
-    // Send verify request to core 0 via FIFO
-    multicore_fifo_push_blocking((FIFO_MSG_VERIFY << 24) | (uint32_t)id);
-    multicore_fifo_push_blocking(code);
+    // Send verify request to core 0 via the door_verify mailbox - NOT the
+    // inter-core SIO FIFO, which multicore_lockout_victim_init() (below)
+    // claims exclusively for flash_safe_execute's lockout protocol. See
+    // shared/door_verify.h.
+    static uint32_t next_seq = 0;
+    uint32_t        my_seq   = ++next_seq; // never 0 - that's the idle value
+
+    door_verify_mailbox.request_id   = id;
+    door_verify_mailbox.request_code = code;
+    __dmb(); // request_id/request_code visible before the seq that vouches for them
+    door_verify_mailbox.request_seq = my_seq;
 
     // Wait for verdict, feeding watchdog while waiting
     absolute_time_t deadline = make_timeout_time_ms(FIFO_VERIFY_TIMEOUT_MS);
     while (true) {
         watchdog_update();
-        if (multicore_fifo_rvalid()) {
-            uint32_t result = multicore_fifo_pop_blocking();
-            if (result == FIFO_RESULT_GRANTED) {
+        if (door_verify_mailbox.response_seq == my_seq) {
+            __dmb(); // seq match visible => response_granted is too
+            if (door_verify_mailbox.response_granted) {
                 buzzer_play_success();
+                buzzer_play_door_open();
+                buzzer_on();
                 latch_open();
+                buzzer_off();
             } else {
                 buzzer_play_fail();
             }

@@ -4,8 +4,11 @@
 
 HSLock: firmware for a TOTP-based electronic door lock on a Raspberry Pi Pico W
 (RP2040 + cyw43 WiFi). C11, built with the Pico SDK + CMake, cross-compiled for
-ARM (`arm-none-eabi-gcc`). Core 0 runs networking/console/UI; core 1 owns flash
-I/O (littlefs) and talks to core 0 over the SDK FIFO (`shared/fifo_protocol.h`).
+ARM (`arm-none-eabi-gcc`). Core 0 runs networking/console/UI; core 1 owns the keypad
+and talks to core 0 over a shared-memory mailbox (`shared/door_verify.h`), not the SDK
+FIFO - `multicore_lockout_victim_init()` (needed for `flash_safe_execute`) claims the
+FIFO exclusively, so FIFO application messages get silently discarded (see ISSUES.md
+C1/C2).
 Keys are TOTP secrets (RFC 6238, real mbedtls HMAC-SHA1) stored in littlefs on
 flash; the serial console (`serial/console.c`, `serial/commands*.c`) is the
 admin/config interface (see `docs/COMMANDS.md`, `docs/KEYPAD.md`).
@@ -17,7 +20,7 @@ admin/config interface (see `docs/COMMANDS.md`, `docs/KEYPAD.md`).
 - `network/` — wifi.c, ntp.c (lwIP-based)
 - `serial/` — console tokenizer/dispatcher + command handlers
 - `storage/` — littlefs-backed key storage + backup import/export
-- `shared/` — totp.c, random.c, core0/core1 FIFO protocol
+- `shared/` — totp.c, random.c, core0/core1 door_verify mailbox
 - `libs/` — vendored deps: `littlefs` and `qrcodegen` are **git submodules**;
   `base32`/`base64` are vendored in-tree
 - `test/` — native host test suite (harnesses, fuzzers, stubs for Pico SDK/lwIP/mbedtls headers)

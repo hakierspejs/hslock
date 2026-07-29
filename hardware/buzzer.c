@@ -57,20 +57,26 @@ void buzzer_play_ntp_sync_error() {
     buzzer_beep_medium();
 }
 
-void buzzer_play_success(void) {
+void buzzer_play_success() {
     buzzer_beep_short();
 }
 
-void buzzer_play_fail(void) {
+void buzzer_play_fail() {
     buzzer_beep_medium();
     buzzer_beep_medium();
 }
 
-void buzzer_play_doorbell(void) {
+void buzzer_play_doorbell() {
     buzzer_beep_medium();
     buzzer_beep_short();
     buzzer_beep_medium();
     buzzer_beep_short();
     buzzer_beep_medium();
+    buzzer_beep_short();
+}
+
+void buzzer_play_door_open() {
+    buzzer_beep_short();
+    buzzer_beep_short();
     buzzer_beep_short();
 }
