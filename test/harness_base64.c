@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "base64.h"
@@ -25,10 +26,43 @@ static void roundtrip(const unsigned char *in, size_t in_len) {
     assert(enc_len == (in_len + 2) / 3 * 4);
 
     unsigned char decoded[64];
-    int           dec_len = base64_decode(encoded, enc_len, decoded);
+    int           dec_len = base64_decode(encoded, enc_len, decoded, sizeof decoded);
 
     assert(dec_len == (int)in_len);
     assert(memcmp(in, decoded, in_len) == 0);
+}
+
+/*
+ * M5 regression: base64_decode must never write past out_cap. The one-byte OOB
+ * write reported in ISSUES.md is a no-'='-padding final quad whose in_len/4*3
+ * output is one byte larger than the caller-sized buffer. Decode into a heap
+ * buffer sized EXACTLY one below the natural output length so that, under ASan,
+ * the old (capacity-blind) decoder's extra store lands in a redzone and aborts;
+ * the fixed decoder must instead return -1 and leave the buffer untouched past
+ * out_cap. "AAAAAAAA" (8 chars, no padding) decodes to 6 zero bytes.
+ */
+static void reject_over_capacity(void) {
+    const char *in     = "AAAAAAAA"; /* 8 chars, no '=' -> 6 output bytes */
+    size_t      in_len = strlen(in);
+    size_t      full   = in_len / 4 * 3; /* == 6 */
+
+    /* Cap one byte short of the full output: previously a 1-byte OOB write. */
+    unsigned char *tight = malloc(full - 1);
+    assert(tight != NULL);
+    assert(base64_decode(in, in_len, tight, full - 1) == -1);
+    free(tight); /* ASan verifies nothing was written past tight[full-2]. */
+
+    /* Zero capacity: not even the first byte may be written. */
+    unsigned char *zero = malloc(1);
+    assert(zero != NULL);
+    assert(base64_decode(in, in_len, zero, 0) == -1);
+    free(zero);
+
+    /* Exact capacity still succeeds and yields the full decode. */
+    unsigned char exact[6];
+    assert(base64_decode(in, in_len, exact, sizeof exact) == (int)full);
+    for (size_t i = 0; i < full; i++)
+        assert(exact[i] == 0x00);
 }
 
 int main(void) {
@@ -55,8 +89,11 @@ int main(void) {
 
     /* Invalid inputs: bad length and out-of-alphabet char must be rejected. */
     unsigned char scratch[64];
-    assert(base64_decode("abc", 3, scratch) == -1);  /* length not multiple of 4 */
-    assert(base64_decode("ab*d", 4, scratch) == -1); /* '*' not in alphabet       */
+    assert(base64_decode("abc", 3, scratch, sizeof scratch) == -1);  /* len not mult of 4 */
+    assert(base64_decode("ab*d", 4, scratch, sizeof scratch) == -1); /* '*' not in alphabet */
+
+    /* M5: decoded output exceeding out_cap must be rejected, not written OOB. */
+    reject_over_capacity();
 
     printf("base64 roundtrip OK\n");
     return 0;

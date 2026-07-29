@@ -39,10 +39,10 @@ static int b64_val(char c) {
     return -1;
 }
 
-int base64_decode(const char *in, size_t in_len, unsigned char *out) {
+int base64_decode(const char *in, size_t in_len, unsigned char *out, size_t out_cap) {
     if (in_len % 4 != 0) return -1;
 
-    int out_len = 0;
+    size_t out_len = 0;
 
     for (size_t i = 0; i < in_len; i += 4) {
         int a = b64_val(in[i]);
@@ -52,10 +52,21 @@ int base64_decode(const char *in, size_t in_len, unsigned char *out) {
 
         if (a < 0 || b < 0 || c < 0 || d < 0) return -1;
 
+        // Bound every write by the caller-supplied capacity: with no '=' in the
+        // final quad the decoder emits in_len/4*3 bytes, which the caller may
+        // have under-sized by one (see ISSUES.md M5). Reject rather than write
+        // past the buffer.
+        if (out_len >= out_cap) return -1;
         out[out_len++] = (a << 2) | (b >> 4);
-        if (in[i+2] != '=') out[out_len++] = (b << 4) | (c >> 2);
-        if (in[i+3] != '=') out[out_len++] = (c << 6) | d;
+        if (in[i+2] != '=') {
+            if (out_len >= out_cap) return -1;
+            out[out_len++] = (b << 4) | (c >> 2);
+        }
+        if (in[i+3] != '=') {
+            if (out_len >= out_cap) return -1;
+            out[out_len++] = (c << 6) | d;
+        }
     }
 
-    return out_len;
+    return (int)out_len;
 }
