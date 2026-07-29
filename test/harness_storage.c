@@ -130,6 +130,9 @@ int main(void) {
     assert(storage_wifi_get(&wtmp) == false);
     assert(storage_wifi_set(&wtmp) == false);
     assert(storage_wifi_clear() == false);
+    uint32_t tftmp;
+    assert(storage_time_floor_get(&tftmp) == false);
+    assert(storage_time_floor_set(1700000000u) == false);
 
     /* --- init on fresh 0xFF flash: mount fails; explicit format recovers --- */
     // storage_init() no longer auto-formats a corrupt/blank device (recovery is
@@ -226,6 +229,16 @@ int main(void) {
     assert(storage_wifi_clear() == true);
     assert(storage_wifi_get(&wgot) == false); /* gone */
     assert(storage_wifi_clear() == false);    /* already gone */
+
+    /* --- anti-rollback time floor (C3) ------------------------------------ */
+    uint32_t tfgot = 0;
+    assert(storage_time_floor_get(&tfgot) == false); /* never written yet */
+    assert(storage_time_floor_set(1700000000u) == true);
+    assert(storage_time_floor_get(&tfgot) == true);
+    assert(tfgot == 1700000000u);
+    assert(storage_time_floor_set(1700003600u) == true); /* overwrite advances */
+    assert(storage_time_floor_get(&tfgot) == true);
+    assert(tfgot == 1700003600u);
 
     /* --- backup export -> import roundtrip -------------------------------- */
     /* Current store holds keys id=1 (updated) and id=3. */

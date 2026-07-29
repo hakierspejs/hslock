@@ -176,8 +176,9 @@ static bool  mounted = false;
 // Directory helpers
 // ---------------------------------------------------------------------------
 
-#define DIR_KEYS  "/keys"
-#define FILE_WIFI "/wifi"
+#define DIR_KEYS    "/keys"
+#define FILE_WIFI   "/wifi"
+#define FILE_TFLOOR "/timefloor"
 
 static bool ensure_dirs(void) {
     struct lfs_info info;
@@ -271,6 +272,42 @@ bool storage_wifi_clear(void) {
     if (!mounted)
         return false;
     return lfs_remove(&lfs, FILE_WIFI) >= 0;
+}
+
+// ---------------------------------------------------------------------------
+// Anti-rollback time floor
+// ---------------------------------------------------------------------------
+
+bool storage_time_floor_get(uint32_t *out) {
+    if (!mounted)
+        return false;
+
+    lfs_file_t f;
+    if (lfs_file_opencfg(&lfs, &f, FILE_TFLOOR, LFS_O_RDONLY, &LFS_FILE_CFG) < 0)
+        return false;
+
+    uint32_t    v;
+    lfs_ssize_t n = lfs_file_read(&lfs, &f, &v, sizeof(v));
+    lfs_file_close(&lfs, &f);
+    if (n != (lfs_ssize_t)sizeof(v))
+        return false;
+
+    *out = v;
+    return true;
+}
+
+bool storage_time_floor_set(uint32_t floor) {
+    if (!mounted)
+        return false;
+
+    lfs_file_t f;
+    int        flags = LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC;
+    if (lfs_file_opencfg(&lfs, &f, FILE_TFLOOR, flags, &LFS_FILE_CFG) < 0)
+        return false;
+
+    lfs_ssize_t n = lfs_file_write(&lfs, &f, &floor, sizeof(floor));
+    lfs_file_close(&lfs, &f);
+    return n == (lfs_ssize_t)sizeof(floor);
 }
 
 // ---------------------------------------------------------------------------

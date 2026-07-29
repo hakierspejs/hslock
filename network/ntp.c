@@ -2,6 +2,7 @@
 #include "wifi.h"
 #include "hardware/buzzer.h"
 #include "hardware/clock.h"
+#include "storage/storage.h"
 #include "version.h"
 
 #include "pico/cyw43_arch.h"
@@ -46,13 +47,31 @@ static uint64_t last_sync_monotonic_us = 0;
 // Cumulative backward slack consumed since boot (see NTP_ROLLBACK_BUDGET_S).
 static uint32_t rollback_budget_used_s = 0;
 
+// Coarse "maximum unix time ever observed" watermark, loaded from littlefs at
+// boot (0 if never written). Enforced as an absolute floor on EVERY sync,
+// including the first after a power cycle - the RAM statics above reset every
+// boot, so without this a spoofed first-sync response could rewind the clock
+// and replay an old TOTP code (ISSUES.md C3).
+static uint32_t persisted_floor = 0;
+
 // ---------------------------------------------------------------------------
 // Rollback protection
 // ---------------------------------------------------------------------------
 
 static bool rollback_check(uint32_t new_time) {
+    // Absolute floor persisted across reboots (the coarse maximum time ever
+    // observed). Enforced on EVERY sync INCLUDING the first: the RAM statics
+    // below are wiped by a power cycle, so this is the only thing stopping a
+    // spoofed first-sync response from rewinding the clock to replay a captured
+    // code (ISSUES.md C3).
+    if (new_time < persisted_floor) {
+        printf("[ntp] rollback rejected: got %u, persisted floor is %u\r\n", new_time,
+               persisted_floor);
+        return false;
+    }
+
     if (!synced)
-        return true; // no floor before first sync
+        return true; // no in-session floor yet; persisted floor already enforced
 
     uint64_t elapsed_us = time_us_64() - last_sync_monotonic_us;
     uint32_t elapsed_s  = (uint32_t)(elapsed_us / 1000000ULL);
@@ -105,6 +124,18 @@ static void apply_time(uint32_t unix_time) {
     last_sync_unix         = unix_time;
     last_sync_monotonic_us = time_us_64();
     synced                 = true;
+
+    // Advance the persisted watermark when the accepted time crosses into a new
+    // coarse bucket. rollback_check() already guaranteed unix_time >=
+    // persisted_floor, so this only ever moves forward; rounding DOWN to the
+    // bucket bounds flash writes to at most one per bucket.
+    uint32_t coarse = unix_time - (unix_time % TIME_FLOOR_GRANULARITY_S);
+    if (coarse > persisted_floor) {
+        if (storage_time_floor_set(coarse))
+            persisted_floor = coarse;
+        else
+            printf("[ntp] warning: failed to persist time floor %u\r\n", coarse);
+    }
 
     printf("[ntp] synced: unix=%u\r\n", unix_time);
 }
@@ -236,6 +267,14 @@ static void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
 
 void ntp_init(void) {
     rtc_init();
+
+    // Load the persisted anti-rollback watermark so the floor is enforced from
+    // the very first sync. Storage is already mounted by this point in boot
+    // (main.c runs storage_init() before ntp_init()); if it isn't (recovery
+    // mode), the floor stays 0 and only the sane band (ntp.h) applies.
+    uint32_t f;
+    if (storage_time_floor_get(&f))
+        persisted_floor = f;
 }
 
 bool ntp_sync(void) {
