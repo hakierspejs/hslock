@@ -243,15 +243,31 @@ void cmd_format_storage(int argc, char **argv) {
         return;
     }
 
+    // Proof-of-presence: the confirmation token is this board's unique id, not
+    // the fixed literal "CONFIRM". While storage is unmounted the dispatcher
+    // allow-lists only format-storage/help, so `status` cannot be run to read
+    // the id, and the token is never echoed here - a remote/blind attacker who
+    // reaches the console in the unmounted state therefore cannot format (which
+    // destroys every key and reboots into an unprovisioned device). Doing so now
+    // requires physical access to read the id off the board (or a prior
+    // `status` while healthy).
+    pico_unique_board_id_t board_id;
+    pico_get_unique_board_id(&board_id);
+    char expected[PICO_UNIQUE_BOARD_ID_SIZE_BYTES * 2 + 1] = {0};
+    for (int i = 0; i < PICO_UNIQUE_BOARD_ID_SIZE_BYTES; i++) {
+        snprintf(expected + i * 2, 3, "%02X", board_id.id[i]);
+    }
+    const int token_len = PICO_UNIQUE_BOARD_ID_SIZE_BYTES * 2; // 16 hex chars
+
     printf("*** WARNING: this will permanently delete ALL keys ***\r\n");
-    printf("type CONFIRM to proceed: ");
+    printf("type this board's %d-hex unique id (shown by 'status') to proceed: ", token_len);
     fflush(stdout);
 
-    char            confirm[10] = {0};
-    int             len         = 0;
-    absolute_time_t deadline    = make_timeout_time_ms(15000);
+    char            confirm[PICO_UNIQUE_BOARD_ID_SIZE_BYTES * 2 + 1] = {0};
+    int             len                                              = 0;
+    absolute_time_t deadline                                         = make_timeout_time_ms(15000);
 
-    while (!time_reached(deadline) && len < 7) {
+    while (!time_reached(deadline) && len < token_len) {
         int c = getchar_timeout_us(0);
         if (c == PICO_ERROR_TIMEOUT) {
             sleep_ms(10);
@@ -263,10 +279,13 @@ void cmd_format_storage(int argc, char **argv) {
         }
         putchar(c);
         fflush(stdout);
+        if (c >= 'a' && c <= 'f') {
+            c -= 'a' - 'A'; // normalise to uppercase to match the printed hex
+        }
         confirm[len++] = (char)c;
     }
 
-    if (strncmp(confirm, "CONFIRM", 7) != 0) {
+    if (len != token_len || strncmp(confirm, expected, (size_t)token_len) != 0) {
         printf("error: aborted\r\n");
         buzzer_play_command_ack();
         return;
