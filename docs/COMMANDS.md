@@ -18,7 +18,7 @@ Commands marked **admin** require `login` first.
 | --------- | -------- | ------------- |
 | `help` / `?` | user | Print available commands for current access level |
 | `status` | user | Show mode, build info, uptime, board ID, WiFi, NTP, key count |
-| `test` | user | Blink LED, activate light, open latch |
+| `test` | admin | Blink LED, activate light, open latch |
 | `get-time` | user | Show current RTC time and last NTP sync timestamp |
 | `login <key_id> <totp_code>` | user | Enable admin mode using TOTP from an admin-flagged key |
 | `logout` | admin | End admin session |

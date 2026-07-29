@@ -46,7 +46,7 @@ static const command_t COMMANDS[] = {
     {"help", false, 0, 0, "help", "Print available commands"},
     {"?", false, 0, 0, "?", "Alias for help"},
     {"status", false, 0, 0, "status", "Show system status"},
-    {"test", false, 0, 0, "test", "Test LED, buzzer and latch"},
+    {"test", true, 0, 0, "test", "Test LED, buzzer and latch"},
     {"login", false, 2, 2, "login <key_id> <totp_code>", "Enable admin mode via TOTP"},
     {"logout", true, 0, 0, "logout", "End admin session"},
     {"reboot", true, 0, 0, "reboot", "Reboot device"},
