@@ -18,7 +18,12 @@ bool wifi_connect(const char *ssid, const char *password) {
     }
 
     printf("[wifi] connecting to '%s'...\r\n", ssid);
-    int rc = cyw43_arch_wifi_connect_timeout_ms(ssid, password, CYW43_AUTH_WPA2_AES_PSK, 15000);
+    // Cap the blocking association attempt below the ~8s watchdog window: since
+    // core 0 now feeds the watchdog itself (ISSUES.md H4), a 15s blocking
+    // connect on the wifi_task() reconnect path would trip a reset mid-attempt
+    // and reboot-loop while the AP is slow/unreachable. A failed attempt is
+    // retried by wifi_task() on its next tick.
+    int rc = cyw43_arch_wifi_connect_timeout_ms(ssid, password, CYW43_AUTH_WPA2_AES_PSK, 6000);
 
     if (rc) {
         printf("[wifi] connect failed: %d\r\n", rc);

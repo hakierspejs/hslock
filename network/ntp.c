@@ -1,5 +1,6 @@
 #include "ntp.h"
 #include "wifi.h"
+#include "core1.h"
 #include "hardware/buzzer.h"
 #include "hardware/clock.h"
 #include "version.h"
@@ -270,6 +271,11 @@ bool ntp_sync(void) {
     // Poll until done or timeout
     absolute_time_t deadline = make_timeout_time_ms(NTP_TIMEOUT_S * 1000);
     while (ntp_state != NTP_STATE_SUCCESS && ntp_state != NTP_STATE_FAILED) {
+        // This poll runs on core 0 and can block for up to NTP_TIMEOUT_S, which
+        // exceeds the watchdog window - keep feeding it (still gated on core 1's
+        // heartbeat) so a reachable-but-slow server does not trip a reset while
+        // a genuinely wedged core still does (ISSUES.md H4).
+        watchdog_feed_core0();
         cyw43_arch_poll();
         sleep_ms(10);
         if (time_reached(deadline)) {
@@ -290,10 +296,24 @@ bool ntp_sync(void) {
 }
 
 void ntp_task(void) {
-    if (!synced)
-        return;
     if (!wifi_is_connected())
         return;
+
+    if (!synced) {
+        // Degraded "time-not-set" state after a bounded boot (ISSUES.md H4):
+        // keep retrying the first sync so the door recovers once NTP is
+        // reachable again. Spaced out (not every tick) so the blocking sync
+        // does not monopolise core 0 and starve the console; retried silently
+        // to avoid nagging the buzzer every interval while NTP stays blocked.
+        static uint64_t last_retry_us = 0;
+        uint64_t        now_us        = time_us_64();
+        if (last_retry_us != 0 &&
+            (now_us - last_retry_us) / 1000000ULL < (uint64_t)NTP_DEGRADED_RETRY_S)
+            return;
+        last_retry_us = now_us;
+        ntp_sync();
+        return;
+    }
 
     uint64_t elapsed_us = time_us_64() - last_sync_monotonic_us;
     uint32_t elapsed_s  = (uint32_t)(elapsed_us / 1000000ULL);
