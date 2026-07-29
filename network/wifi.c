@@ -70,7 +70,10 @@ void wifi_task(void) {
 
     if (wifi_connect(cfg.ssid, cfg.password)) {
         printf("[wifi] reconnected\r\n");
-        ntp_sync();
+        // Don't force an NTP sync on every reconnect: a deauth/reassociate loop
+        // would otherwise drive one sync per cycle, bypassing the resync
+        // interval and its rollback budget. ntp_task() schedules resyncs per
+        // NTP_RESYNC_INTERVAL_S.
         last_logged_state = WIFI_LOG_STATE_CONNECTED;
     } else {
         printf("[wifi] reconnect failed\r\n");
