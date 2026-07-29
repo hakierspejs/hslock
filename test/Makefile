@@ -61,6 +61,15 @@ TOTP_LIBS     := -lmbedcrypto
 STORAGE_SRCS := harness_storage.c $(ROOT)/storage/storage.c $(ROOT)/storage/backup.c \
                 $(ROOT)/libs/littlefs/lfs.c $(ROOT)/libs/littlefs/lfs_util.c
 STORAGE_DEFS := -DLFS_NO_MALLOC -DLFS_NO_DEBUG
+# storage.c now encrypts secrets at rest with AES-256-GCM (H7), so the harness
+# links the REAL mbedtls (system libmbedcrypto) like the TOTP harness. `-idirafter
+# stub` keeps the pico/hardware shims reachable while letting the real
+# <mbedtls/gcm.h> + <mbedtls/md.h> win over the compile-only stubs. CI: the test
+# job already apt-installs `libmbedtls-dev` for the TOTP harness.
+STORAGE_INCLUDES := -I$(ROOT) -I$(ROOT)/hardware -I$(ROOT)/network -I$(ROOT)/serial \
+                    -I$(ROOT)/storage -I$(SHARED) -I$(BASE32) -I$(BASE64) \
+                    -I$(QRCODEGEN) -I$(ROOT)/libs/littlefs -idirafter stub
+STORAGE_LIBS := -lmbedcrypto
 
 # Commands harness: links serial/commands.c (the dispatcher) against SPY handler
 # stubs + a stub buzzer, all inside harness_commands.c. No real key/system/
@@ -143,7 +152,8 @@ $(BUILD)/asan_totp: $(TOTP_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(TOTP_INCLUDES) $(TOTP_SRCS) $(TOTP_LIBS) -o $@
 
 $(BUILD)/asan_storage: $(STORAGE_SRCS) | $(BUILD)
-	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(STORAGE_DEFS) $(INCLUDES) $(STORAGE_SRCS) -o $@
+	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(STORAGE_DEFS) $(STORAGE_INCLUDES) $(STORAGE_SRCS) \
+	    $(STORAGE_LIBS) -o $@
 
 $(BUILD)/asan_commands: $(COMMANDS_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(INCLUDES) $(COMMANDS_SRCS) -o $@
@@ -169,7 +179,8 @@ $(BUILD)/vg_totp: $(TOTP_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(TOTP_INCLUDES) $(TOTP_SRCS) $(TOTP_LIBS) -o $@
 
 $(BUILD)/vg_storage: $(STORAGE_SRCS) | $(BUILD)
-	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(STORAGE_DEFS) $(INCLUDES) $(STORAGE_SRCS) -o $@
+	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(STORAGE_DEFS) $(STORAGE_INCLUDES) $(STORAGE_SRCS) \
+	    $(STORAGE_LIBS) -o $@
 
 $(BUILD)/vg_commands: $(COMMANDS_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(INCLUDES) $(COMMANDS_SRCS) -o $@
@@ -191,8 +202,8 @@ coverage: check-submodules | $(COV_DIR)/obj
 	    -o $(COV_DIR)/obj/cov_base64
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(TOTP_INCLUDES) $(TOTP_SRCS) $(TOTP_LIBS) \
 	    -o $(COV_DIR)/obj/cov_totp
-	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(STORAGE_DEFS) $(INCLUDES) $(STORAGE_SRCS) \
-	    -o $(COV_DIR)/obj/cov_storage
+	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(STORAGE_DEFS) $(STORAGE_INCLUDES) $(STORAGE_SRCS) \
+	    $(STORAGE_LIBS) -o $(COV_DIR)/obj/cov_storage
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(INCLUDES) $(COMMANDS_SRCS) \
 	    -o $(COV_DIR)/obj/cov_commands
 	@echo "== coverage: running instrumented harnesses =="

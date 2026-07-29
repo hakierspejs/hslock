@@ -123,4 +123,16 @@ target_link_libraries(hslock
 pico_enable_stdio_usb(hslock 1)
 pico_enable_stdio_uart(hslock 0)
 
+# H7 (part A): close the no-firmware-cooperation USB reset-to-BOOTSEL paths.
+# pico_stdio_usb otherwise lets a host drop the chip into the BOOTSEL mass-
+# storage bootloader with `stty ... 1200` or `picotool reboot -u` and then
+# `picotool save` the whole image (every seed + the WiFi password). Disabling
+# both reset interfaces means extraction now requires holding BOOTSEL / SWD,
+# not just the port. (BOOTSEL-on-power-up and SWD remain — see H7 part B for
+# at-rest encryption and the verify-on-hw note.)
+target_compile_definitions(hslock PRIVATE
+    PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=0
+    PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=0
+)
+
 pico_add_extra_outputs(hslock)
