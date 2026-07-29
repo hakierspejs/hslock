@@ -8,7 +8,7 @@
  * secret) pair and then, every run, deterministically exercises BOTH paths of
  * totp_verify:
  *
- *   - unix_time == 0            -> the "RTC not set" reject branch
+ *   - clock_get_unix_time() returns false -> the "RTC not set" reject branch
  *   - a valid code at T-1/T/T+1 -> the window loop's ACCEPT branch (return true)
  *   - an impossible 7-digit code -> the full loop with no match (reject tail)
  *
@@ -21,6 +21,7 @@
  * that fails to verify would abort() the run and surface a totp.c regression.
  */
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -30,9 +31,13 @@
 
 /* Injectable clock: totp_verify() reads the current time through this. */
 static uint32_t g_unix_time;
+static bool     g_clock_set;
 
-uint32_t clock_get_unix_time(void) {
-    return g_unix_time;
+bool clock_get_unix_time(uint32_t *out_unix_time) {
+    if (!g_clock_set)
+        return false;
+    *out_unix_time = g_unix_time;
+    return true;
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
@@ -49,11 +54,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (secret_len)
         memcpy(secret, data + off, secret_len);
 
-    /* RTC-not-set: unix_time == 0 must reject regardless of the code. */
+    /* RTC-not-set: must reject regardless of the code, even code 0. */
+    g_clock_set = false;
     g_unix_time = 0;
     (void)totp_verify(secret, secret_len, 0);
 
     /* RTC set: force a non-zero time so the step arithmetic and window run. */
+    g_clock_set   = true;
     g_unix_time   = t | 1u;
     uint64_t step = (uint64_t)g_unix_time / TOTP_STEP_SECONDS;
 

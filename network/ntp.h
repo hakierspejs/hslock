@@ -9,6 +9,14 @@
 #define NTP_TIMEOUT_S          15        // per-sync timeout
 #define NTP_ROLLBACK_EPSILON_S 60        // max allowed backward correction
 
+// Sanity band for any timestamp accepted from the network: it must fall between
+// the firmware's own build time and this many years after it. Applied
+// unconditionally - including before the first sync, where rollback_check()
+// has no floor at all - so a single malformed/spoofed response (e.g. epoch 0,
+// or a wrapped-around seconds_since_1900 field) can't be applied to the RTC.
+#define NTP_SANE_YEARS_AHEAD 20
+#define NTP_SANE_MAX_AGE_S   ((uint32_t)NTP_SANE_YEARS_AHEAD * 365 * 86400)
+
 // Call once at boot, before any WiFi/storage checks - initialises the RTC.
 // Must not be gated on WiFi/storage availability: the RTC's clock divider is
 // configured here, and any rtc_set_datetime()/rtc_get_datetime() call before

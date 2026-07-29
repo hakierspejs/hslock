@@ -75,6 +75,7 @@ else()
 endif()
 
 string(TIMESTAMP BUILD_DATE "%Y-%m-%d %H:%M UTC" UTC)
+string(TIMESTAMP BUILD_UNIX_TIME "%s" UTC)
 
 configure_file(
     ${CMAKE_SOURCE_DIR}/version.h.in

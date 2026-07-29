@@ -1,9 +1,9 @@
 #include "clock.h"
 
-uint32_t clock_get_unix_time(void) {
+bool clock_get_unix_time(uint32_t *out_unix_time) {
     datetime_t dt;
     if (!rtc_get_datetime(&dt))
-        return 0;
+        return false;
 
     // Days per month (non-leap year)
     static const int days_in_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -28,7 +28,8 @@ uint32_t clock_get_unix_time(void) {
     // Days this month (minus 1 since today isn't complete)
     days += dt.day - 1;
 
-    return days * 86400 + dt.hour * 3600 + dt.min * 60 + dt.sec;
+    *out_unix_time = days * 86400 + dt.hour * 3600 + dt.min * 60 + dt.sec;
+    return true;
 }
 
 void clock_set_from_unix_time(uint32_t unix_time) {

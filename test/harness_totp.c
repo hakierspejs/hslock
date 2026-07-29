@@ -10,12 +10,14 @@
  * Coverage of the two functions in totp.c:
  *   totp_at    - the standard RFC 6238 SHA1 test-vector table (seed
  *                "12345678901234567890"), asserting the exact 6-digit codes.
- *   totp_verify - RTC-not-set (unix_time==0) -> false; correct code accepted;
- *                each of the T-1 / T / T+1 window steps accepted; a wrong code
- *                and an out-of-window code rejected.
+ *   totp_verify - RTC-not-set (clock_get_unix_time returns false) -> false
+ *                regardless of code; correct code accepted; each of the T-1 /
+ *                T / T+1 window steps accepted; a wrong code and an
+ *                out-of-window code rejected.
  */
 
 #include <assert.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -24,9 +26,13 @@
 
 /* Injectable clock: totp_verify() reads the current time through this. */
 static uint32_t g_unix_time = 0;
+static bool     g_clock_set = true;
 
-uint32_t clock_get_unix_time(void) {
-    return g_unix_time;
+bool clock_get_unix_time(uint32_t *out_unix_time) {
+    if (!g_clock_set)
+        return false;
+    *out_unix_time = g_unix_time;
+    return true;
 }
 
 /* RFC 6238 Appendix B, SHA1 rows, truncated to TOTP_DIGITS (6) digits. */
@@ -57,10 +63,14 @@ int main(void) {
 
     /* --- totp_verify ------------------------------------------------------ */
 
-    /* RTC not set: unix_time == 0 must be rejected regardless of code. */
+    /* RTC not set: rejected regardless of code, even the one that would
+     * otherwise be correct for epoch 0 - epoch 0 itself must not be treated
+     * as "unset". */
+    g_clock_set = false;
     g_unix_time = 0;
     assert(totp_verify(secret, secret_len, 0) == false);
     assert(totp_verify(secret, secret_len, totp_at(secret, secret_len, 0)) == false);
+    g_clock_set = true;
 
     /* Pick a time whose step and neighbours all yield distinct codes so the
      * window logic is exercised unambiguously. */

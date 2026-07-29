@@ -2,6 +2,7 @@
 #include "wifi.h"
 #include "hardware/buzzer.h"
 #include "hardware/clock.h"
+#include "version.h"
 
 #include "pico/cyw43_arch.h"
 #include "pico/rand.h"
@@ -132,6 +133,16 @@ static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip
                                   ((uint32_t)buf[42] << 8) | (uint32_t)buf[43];
 
     uint32_t unix_time = seconds_since_1900 - NTP_DELTA;
+
+    // Unconditional sanity band - rollback_check() alone is not enough: it has
+    // no floor at all before the first sync, and no upper bound ever. This
+    // catches both a spoofed epoch 0 (H2) and a wrapped-around or wildly-future
+    // seconds_since_1900 (H3) before either reaches the RTC.
+    if (unix_time < BUILD_UNIX_TIME || unix_time - BUILD_UNIX_TIME > NTP_SANE_MAX_AGE_S) {
+        printf("[ntp] timestamp outside sane band: %u\r\n", unix_time);
+        ntp_state = NTP_STATE_FAILED;
+        return;
+    }
 
     if (!rollback_check(unix_time)) {
         ntp_state = NTP_STATE_FAILED;

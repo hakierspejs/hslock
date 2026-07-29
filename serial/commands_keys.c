@@ -177,7 +177,9 @@ void cmd_add_key(int argc, char **argv) {
     key.is_enabled        = true;
     key.is_admin          = false;
     key.is_checksum_valid = true;
-    key.created_at        = clock_get_unix_time();
+    uint32_t created_at   = 0; // 0 ("unknown") if the RTC isn't set
+    clock_get_unix_time(&created_at);
+    key.created_at = created_at;
     strncpy(key.name, argv[2], KEY_NAME_MAX - 1);
     generate_secret(key.secret);
 

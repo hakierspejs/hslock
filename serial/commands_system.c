@@ -75,9 +75,8 @@ void cmd_status(int argc, char **argv) {
 }
 
 void cmd_get_time(int argc, char **argv) {
-    uint32_t unix_time = clock_get_unix_time();
-
-    if (unix_time == 0) {
+    uint32_t unix_time;
+    if (!clock_get_unix_time(&unix_time)) {
         printf("time: not set\r\n");
         buzzer_play_command_ack();
         return;
@@ -149,7 +148,8 @@ void cmd_login(int argc, char **argv) {
     }
 
     // RTC not initialised - NTP never synced
-    if (clock_get_unix_time() == 0) {
+    uint32_t now_unix;
+    if (!clock_get_unix_time(&now_unix)) {
         if (time_us_64() >= BOOT_BYPASS_WINDOW_US) {
             printf("warning: RTC not set - open mode\r\n");
             admin_mode = true;

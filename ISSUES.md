@@ -68,6 +68,7 @@ once the clock is trustworthy, but not required by this decision.
   silicon behaviour that could not be exercised here (the ARM toolchain and
   `PICO_SDK_PATH` are absent). Confirm on a device.
 - **[fixed]** — confirmed on hardware and remediated; kept here for history.
+- **[ignored]** — reviewed and deliberately not fixing; rationale recorded inline.
 
 The two bugs recorded in `test/FUZZING.md` (littlefs `lookahead_size` overflow,
 `to_key_record` non-bool load) were re-checked and are still fixed. Not listed.
@@ -193,7 +194,13 @@ M9 (predictable DNS) is left unfixed, which removes that requirement.
 
 ## HIGH
 
-### H1 — Keypad brute force: no lockout, no delay, no audit trail **[A]** [verified]
+### H1 — Keypad brute force: no lockout, no delay, no audit trail **[A]** [ignored]
+
+**Ignored:** the attacker does not have the time window to brute-force the PIN even
+without a rate limit — decided against the cost numbers below, not because they're
+wrong. Revisit if the buzzer is ever made non-blocking (see the ~18.5h estimate below)
+or if M12's retained-prefix behaviour is fixed in a way that widens the practical
+search window.
 
 `core1.c:43-90` has no failure counter, lockout, or escalating delay, and nothing is
 persisted. Costed from the code's own blocking sleeps: ~25 ms per digit + 200 ms beep,
@@ -210,6 +217,8 @@ keypad is outside, an injector spliced onto the ribbon runs this unattended with
 lockout, alarm, or audit trail — and M12's retained-prefix behaviour cuts the search
 space further.
 
+Not planned (see **[ignored]** rationale above). If revisited:
+
 - [ ] Add a failure counter: cooldown after ~5 consecutive failures, doubling to a
       ~15 min cap.
 - [ ] Persist the counter plus a monotonic timestamp to flash so a power cycle cannot
@@ -218,7 +227,15 @@ space further.
 - [ ] Keep an explicit delay if the buzzer is made non-blocking — it is currently
       load-bearing.
 
-### H2 — Spoofed NTP timestamp of epoch 0 denies entry to everyone **[B]** [verified]
+### H2 — Spoofed NTP timestamp of epoch 0 denies entry to everyone **[B]** [fixed]
+
+Fixed: `network/ntp.c` now rejects any `unix_time` outside `[BUILD_UNIX_TIME,
+BUILD_UNIX_TIME + NTP_SANE_MAX_AGE_S]` (20 years) unconditionally in `ntp_recv_cb`,
+before `rollback_check` - so an epoch-0 (or any other absurd) timestamp never reaches
+`apply_time`/the RTC, first sync or not. `clock_get_unix_time()` is now
+`bool clock_get_unix_time(uint32_t *out)` (`hardware/clock.h`), so epoch 0 is a
+legitimate time distinguishable from "RTC not set" at every call site
+(`totp_verify`, `cmd_get_time`, `cmd_login`, `cmd_add_key`).
 
 `hardware/clock.c:3-6` returns `0` when `rtc_get_datetime()` fails, and the arithmetic at
 `clock.c:31` also returns exactly `0` for 1970-01-01 00:00:00 — the same value means both
@@ -234,9 +251,9 @@ An on-path attacker answers the first sync with `seconds_since_1900 = 2208988800
 Secondary escalation (position **C**): the same condition trips the credential-free admin
 branch at `commands_system.c:152` (M1).
 
-- [ ] Reject `unix_time` outside a sane band in `ntp_recv_cb` (e.g. below the firmware
+- [x] Reject `unix_time` outside a sane band in `ntp_recv_cb` (e.g. below the firmware
       build timestamp, or more than ~20 years after it).
-- [ ] Change `clock_get_unix_time()` to signal validity out-of-band
+- [x] Change `clock_get_unix_time()` to signal validity out-of-band
       (`bool clock_get_unix_time(uint32_t *out)`) so epoch 0 is not an error code.
 
 ### H3 — Unbounded forward clock jump permanently wedges the lock **[B]** [verified]
@@ -868,8 +885,7 @@ Ordered by "can someone outside the building use this", then by cost.
 2. **C2** — fix *together with* C1. Restoring verdict delivery without request correlation
    turns a masked bug into a live outside bypass.
 3. **C3** — the persisted time floor. Now the sole control against out-of-window replay.
-4. **H1** — the keypad lockout counter. Biggest single improvement to the real security
-   margin at the door.
+4. ~~**H1** — the keypad lockout counter.~~ **Ignored** — see H1 entry.
 5. **H2, H3, M9, M11** — the rest of the NTP trust model, as one change: sanity band, forward
    cap, drop-don't-fail, seeded `LWIP_RAND`. M9 belongs here because leaving it unfixed means
    the others don't need an on-path position.

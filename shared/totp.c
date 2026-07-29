@@ -40,8 +40,8 @@ uint32_t totp_at(const uint8_t *secret, size_t secret_len, uint64_t step) {
 }
 
 bool totp_verify(const uint8_t *secret, size_t secret_len, uint32_t code) {
-    uint32_t unix_time = clock_get_unix_time();
-    if (unix_time == 0) {
+    uint32_t unix_time;
+    if (!clock_get_unix_time(&unix_time)) {
         printf("[totp] RTC not set\r\n");
         return false;
     }
