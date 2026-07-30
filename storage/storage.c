@@ -1,6 +1,8 @@
 #include "storage.h"
 
 #include "shared/wipe.h"
+#include "shared/debug.h"
+
 #include "lfs.h"
 #include "lfs_util.h"
 #include "pico/stdlib.h"
@@ -310,7 +312,7 @@ bool storage_key_get(uint16_t id, key_record_t *out) {
     secure_wipe(&stored, sizeof(stored));
 
     if (!out->is_checksum_valid)
-        printf("[storage] key %u checksum mismatch\r\n", id);
+        DBG("[storage] key %u checksum mismatch\r\n", id);
 
     return true;
 }

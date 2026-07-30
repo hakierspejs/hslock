@@ -21,6 +21,7 @@
 #include "storage/storage.h"
 
 #include "hardware/sync.h"
+#include "shared/debug.h"
 #include "shared/door_verify.h"
 #include "shared/totp.h"
 
@@ -67,15 +68,15 @@ static void core0_handle_door_verify(void) {
 
     key_record_t key;
     if (!storage_key_get(id, &key)) {
-        printf("[door] key %u: not found\r\n", id);
+        DBG("[door] key %u: not found\r\n", id);
     } else if (!key.is_checksum_valid) {
-        printf("[door] key %u: corrupt\r\n", id);
+        DBG("[door] key %u: corrupt\r\n", id);
     } else if (!key.is_enabled) {
-        printf("[door] key %u: disabled\r\n", id);
+        DBG("[door] key %u: disabled\r\n", id);
     } else if (!totp_verify(key.secret, KEY_SECRET_LEN, code)) {
-        printf("[door] key %u: invalid code\r\n", id);
+        DBG("[door] key %u: invalid code\r\n", id);
     } else {
-        printf("[door] key %u (%s): granted\r\n", id, key.name);
+        DBG("[door] key %u (%s): granted\r\n", id, key.name);
         granted = true;
     }
 
