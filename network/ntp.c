@@ -12,6 +12,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <time.h>
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,11 @@ static ntp_state_t     ntp_state = NTP_STATE_IDLE;
 static uint8_t         ntp_nonce[8]; // stored transmit timestamp for origin check
 static struct udp_pcb *ntp_pcb = NULL;
 static ip_addr_t       server_addr;
+
+// Bumped once per ntp_sync(); passed through the DNS callback arg so a delayed
+// reply from an earlier, timed-out request is dropped instead of clobbering the
+// state of a later sync (M14).
+static uint32_t ntp_generation = 0;
 
 static bool     synced                 = false;
 static uint32_t last_sync_unix         = 0;
@@ -115,6 +121,13 @@ static void apply_time(uint32_t unix_time) {
 
 static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr,
                         u16_t port) {
+    // Drop datagrams that arrive outside a waiting window (M14): a response for
+    // a request we are no longer waiting on must not touch the state machine.
+    if (ntp_state != NTP_STATE_WAITING) {
+        pbuf_free(p);
+        return;
+    }
+
     if (p->tot_len < 48) { // use tot_len not len (L10 fix too)
         printf("[ntp] response too short\r\n");
         pbuf_free(p);
@@ -198,6 +211,11 @@ static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip
 // ---------------------------------------------------------------------------
 
 static void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
+    // Drop a stale callback from an earlier, timed-out sync (M14): a delayed DNS
+    // reply must not clobber server_addr / nonce / state of a later request.
+    if ((uint32_t)(uintptr_t)arg != ntp_generation)
+        return;
+
     if (!ipaddr) {
         printf("[ntp] DNS failed\r\n");
         ntp_state = NTP_STATE_FAILED;
@@ -253,13 +271,17 @@ bool ntp_sync(void) {
     udp_recv(ntp_pcb, ntp_recv_cb, NULL);
     ntp_state = NTP_STATE_RESOLVING;
 
+    // New request generation — any DNS callback carrying an older token is stale.
+    uint32_t generation = ++ntp_generation;
+    void    *gen_arg    = (void *)(uintptr_t)generation;
+
     cyw43_arch_lwip_begin();
-    err_t err = dns_gethostbyname(NTP_SERVER, &server_addr, dns_found_cb, NULL);
+    err_t err = dns_gethostbyname(NTP_SERVER, &server_addr, dns_found_cb, gen_arg);
     cyw43_arch_lwip_end();
 
     if (err == ERR_OK) {
         // Already cached - fire callback manually
-        dns_found_cb(NTP_SERVER, &server_addr, NULL);
+        dns_found_cb(NTP_SERVER, &server_addr, gen_arg);
     } else if (err != ERR_INPROGRESS) {
         printf("[ntp] DNS error: %d\r\n", err);
         udp_remove(ntp_pcb);
