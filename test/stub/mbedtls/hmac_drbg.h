@@ -16,11 +16,15 @@ typedef struct {
     int dummy;
 } mbedtls_hmac_drbg_context;
 
+/* Hand-wrapped (the long seed_buf prototype formats differently across
+ * clang-format versions; fence it so CI and local agree). */
+/* clang-format off */
 void mbedtls_hmac_drbg_init(mbedtls_hmac_drbg_context *ctx);
-int  mbedtls_hmac_drbg_seed_buf(mbedtls_hmac_drbg_context *ctx,
-                                const mbedtls_md_info_t *md_info, const unsigned char *data,
-                                size_t data_len);
-int  mbedtls_hmac_drbg_random(void *p_rng, unsigned char *output, size_t out_len);
 void mbedtls_hmac_drbg_free(mbedtls_hmac_drbg_context *ctx);
+int mbedtls_hmac_drbg_seed_buf(mbedtls_hmac_drbg_context *ctx,
+                               const mbedtls_md_info_t *md_info,
+                               const unsigned char *data, size_t data_len);
+int mbedtls_hmac_drbg_random(void *p_rng, unsigned char *output, size_t out_len);
+/* clang-format on */
 
 #endif
