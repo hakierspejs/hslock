@@ -306,6 +306,8 @@ bool storage_key_get(uint16_t id, key_record_t *out) {
 bool storage_key_save(const key_record_t *key) {
     if (!mounted)
         return false;
+    if (key->id > KEY_ID_MAX)
+        return false;
     char path[40];
     key_path(key->id, path, sizeof(path));
 
