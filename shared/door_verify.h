@@ -35,4 +35,11 @@ typedef struct {
 
 extern door_verify_mailbox_t door_verify_mailbox;
 
+// Core-0 servicer of the mailbox: reads a pending keypad request (if any) and
+// writes back the verdict. Non-blocking and single-shot per request. Defined in
+// main.c and normally called once per core-0 main-loop iteration; also pumped
+// inside core-0 blocking loops (import/format waits) so a paste/confirm can
+// never starve the keypad (ISSUES.md L9).
+void core0_handle_door_verify(void);
+
 #endif
