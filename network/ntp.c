@@ -34,14 +34,22 @@ typedef enum {
     NTP_STATE_FAILED,
 } ntp_state_t;
 
-static ntp_state_t     ntp_state = NTP_STATE_IDLE;
-static uint8_t         ntp_nonce[8]; // stored transmit timestamp for origin check
-static struct udp_pcb *ntp_pcb = NULL;
-static ip_addr_t       server_addr;
+// ntp_state, synced and the last_sync_* pair are written from the lwIP
+// callbacks (dns_found_cb / ntp_recv_cb -> apply_time), which run in a
+// low-priority IRQ under pico_cyw43_arch_lwip_threadsafe_background, and are
+// read/spun-on from thread context (ntp_sync's wait loop, ntp_task,
+// ntp_is_synced, ntp_last_sync_time). volatile stops the compiler caching the
+// spun-on value or reordering the reads across the IRQ store. (The 64-bit
+// last_sync_monotonic_us can still tear on a 32-bit read; eliminating that
+// needs the copy-48-bytes+flag restructuring deferred to M10b.)
+static volatile ntp_state_t ntp_state = NTP_STATE_IDLE;
+static uint8_t              ntp_nonce[8]; // stored transmit timestamp for origin check
+static struct udp_pcb      *ntp_pcb = NULL;
+static ip_addr_t            server_addr;
 
-static bool     synced                 = false;
-static uint32_t last_sync_unix         = 0;
-static uint64_t last_sync_monotonic_us = 0;
+static volatile bool     synced                 = false;
+static volatile uint32_t last_sync_unix         = 0;
+static volatile uint64_t last_sync_monotonic_us = 0;
 
 // Cumulative backward slack consumed since boot (see NTP_ROLLBACK_BUDGET_S).
 static uint32_t rollback_budget_used_s = 0;
@@ -239,18 +247,28 @@ void ntp_init(void) {
 }
 
 bool ntp_sync(void) {
+    // Every lwIP call below runs in thread context, so it must be bracketed by
+    // cyw43_arch_lwip_begin()/end() to lock out the background-IRQ lwIP handler
+    // (udp_remove unlinks the pcb from lwIP's global list; racing udp_input()
+    // walking that list is a use-after-free the attacker times via datagrams).
     if (ntp_pcb) {
+        cyw43_arch_lwip_begin();
         udp_remove(ntp_pcb);
+        cyw43_arch_lwip_end();
         ntp_pcb = NULL;
     }
 
+    cyw43_arch_lwip_begin();
     ntp_pcb = udp_new_ip_type(IPADDR_TYPE_ANY);
+    cyw43_arch_lwip_end();
     if (!ntp_pcb) {
         printf("[ntp] failed to create UDP pcb\r\n");
         return false;
     }
 
+    cyw43_arch_lwip_begin();
     udp_recv(ntp_pcb, ntp_recv_cb, NULL);
+    cyw43_arch_lwip_end();
     ntp_state = NTP_STATE_RESOLVING;
 
     cyw43_arch_lwip_begin();
@@ -258,11 +276,18 @@ bool ntp_sync(void) {
     cyw43_arch_lwip_end();
 
     if (err == ERR_OK) {
-        // Already cached - fire callback manually
+        // Already cached - fire callback manually. On the async path lwIP
+        // invokes dns_found_cb from the background IRQ (already holding the lwIP
+        // lock), but here we call it from thread context, so its lwIP calls
+        // (udp_connect/pbuf_alloc/udp_sendto/pbuf_free) must be locked by us.
+        cyw43_arch_lwip_begin();
         dns_found_cb(NTP_SERVER, &server_addr, NULL);
+        cyw43_arch_lwip_end();
     } else if (err != ERR_INPROGRESS) {
         printf("[ntp] DNS error: %d\r\n", err);
+        cyw43_arch_lwip_begin();
         udp_remove(ntp_pcb);
+        cyw43_arch_lwip_end();
         ntp_pcb = NULL;
         return false;
     }
@@ -274,7 +299,9 @@ bool ntp_sync(void) {
         sleep_ms(10);
         if (time_reached(deadline)) {
             printf("[ntp] timed out\r\n");
+            cyw43_arch_lwip_begin();
             udp_remove(ntp_pcb);
+            cyw43_arch_lwip_end();
             ntp_pcb = NULL;
             return false;
         }
@@ -283,7 +310,9 @@ bool ntp_sync(void) {
     bool ok   = ntp_state == NTP_STATE_SUCCESS;
     ntp_state = NTP_STATE_IDLE;
 
+    cyw43_arch_lwip_begin();
     udp_remove(ntp_pcb);
+    cyw43_arch_lwip_end();
     ntp_pcb = NULL;
 
     return ok;
