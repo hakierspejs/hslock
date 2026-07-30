@@ -77,11 +77,7 @@ void cmd_get_key(int argc, char **argv) {
     printf("enabled: %s\r\n", key.is_enabled ? "yes" : "no");
     printf("admin:   %s\r\n", key.is_admin ? "yes" : "no");
     printf("created: %s\r\n", created);
-    printf("secret:  ");
-    for (int i = 0; i < KEY_SECRET_LEN; i++) {
-        printf("%02X", key.secret[i]);
-    }
-    printf("\r\n");
+    // Deliberately no secret dump here: use get-key-secret to read the seed.
 
     buzzer_play_command_ack();
 }
