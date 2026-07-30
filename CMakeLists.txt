@@ -6,6 +6,13 @@ project(hslock_project C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
+# Default shipped builds to Release so NDEBUG is defined. This compiles out the
+# lwIP debug/stats machinery guarded by `#ifndef NDEBUG` in lwipopts.h, so no
+# network-state introspection ships in release firmware.
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
 set(MBEDTLS_CONFIG_FILE "mbedtls_config.h")
 
 pico_sdk_init()
