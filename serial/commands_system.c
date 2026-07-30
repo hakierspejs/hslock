@@ -10,6 +10,7 @@
 #include "storage/backup.h"
 #include "storage/storage.h"
 #include "shared/totp.h"
+#include "shared/wipe.h"
 #include "version.h"
 #include "pico/stdlib.h"
 #include "pico/time.h"
@@ -47,6 +48,7 @@ void cmd_status(int argc, char **argv) {
     } else {
         printf("wifi:      not configured\r\n");
     }
+    secure_wipe(&wifi, sizeof(wifi));
 
     // NTP
     if (ntp_is_synced()) {
@@ -70,6 +72,9 @@ void cmd_status(int argc, char **argv) {
             enabled++;
     }
     printf("keys:      %d total, %d enabled, %d corrupt\r\n", count, enabled, corrupt);
+
+    // Scrub the resident key database (seeds included) from BSS.
+    secure_wipe(keys, sizeof(keys));
 
     buzzer_play_command_ack();
 }
@@ -129,6 +134,9 @@ void cmd_login(int argc, char **argv) {
             break;
         }
     }
+    // Only the any_admin predicate was needed; scrub the resident key database
+    // (seeds included) from BSS before any of the branches below returns.
+    secure_wipe(keys, sizeof(keys));
 
     // Storage must be working - never grant access if we can't trust our own data
     if (!storage_is_mounted()) {
@@ -146,6 +154,9 @@ void cmd_login(int argc, char **argv) {
         buzzer_play_command_ack();
         return;
     }
+    // On the fall-through path wifi holds the configured SSID/password; it is
+    // only needed for the presence check above, so scrub the credentials.
+    secure_wipe(&wifi, sizeof(wifi));
 
     // RTC not initialised - NTP never synced
     uint32_t now_unix;
@@ -177,12 +188,14 @@ void cmd_login(int argc, char **argv) {
     key_record_t key;
     if (!storage_key_get(id, &key)) {
         printf("error: invalid credentials\r\n");
+        secure_wipe(&key, sizeof(key));
         buzzer_play_auth_error();
         return;
     }
 
     if (!key.is_enabled || !key.is_admin || !key.is_checksum_valid) {
         printf("error: invalid credentials\r\n");
+        secure_wipe(&key, sizeof(key));
         buzzer_play_auth_error();
         return;
     }
@@ -190,12 +203,14 @@ void cmd_login(int argc, char **argv) {
     // Verify TOTP
     if (!totp_verify(key.secret, KEY_SECRET_LEN, code)) {
         printf("error: invalid credentials\r\n");
+        secure_wipe(&key, sizeof(key));
         buzzer_play_auth_error();
         return;
     }
 
     admin_mode = true;
     printf("login: admin mode enabled\r\n");
+    secure_wipe(&key, sizeof(key));
     buzzer_play_command_ack();
 }
 

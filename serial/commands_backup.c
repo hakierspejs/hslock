@@ -1,6 +1,7 @@
 #include "commands_handlers.h"
 #include "hardware/buzzer.h"
 #include "storage/backup.h"
+#include "shared/wipe.h"
 #include "libs/base64/base64.h"
 #include "pico/stdlib.h"
 #include "pico/time.h"
@@ -14,6 +15,7 @@ void cmd_export_keys(int argc, char **argv) {
     int len = backup_export(export_buf, sizeof(export_buf));
     if (len < 0) {
         printf("error: export failed\r\n");
+        secure_wipe(export_buf, sizeof(export_buf));
         buzzer_play_command_ack();
         return;
     }
@@ -22,6 +24,10 @@ void cmd_export_keys(int argc, char **argv) {
     printf("--- BEGIN HSLOCK BACKUP ---\r\n");
     printf("%s\r\n", b64_buf);
     printf("--- END HSLOCK BACKUP ---\r\n");
+
+    // The blob and its base64 encoding both carry the seeds; scrub them from BSS.
+    secure_wipe(export_buf, sizeof(export_buf));
+    secure_wipe(b64_buf, sizeof(b64_buf));
 
     buzzer_play_command_ack();
 }
@@ -66,6 +72,8 @@ void cmd_import_keys(int argc, char **argv) {
 
     if (b64_len == 0) {
         printf("error: no data received\r\n");
+        secure_wipe(b64_buf, sizeof(b64_buf));
+        secure_wipe(line, sizeof(line));
         buzzer_play_command_ack();
         return;
     }
@@ -75,6 +83,9 @@ void cmd_import_keys(int argc, char **argv) {
     int len = base64_decode(b64_buf, b64_len, import_buf);
     if (len < 0) {
         printf("error: invalid base64\r\n");
+        secure_wipe(b64_buf, sizeof(b64_buf));
+        secure_wipe(line, sizeof(line));
+        secure_wipe(import_buf, sizeof(import_buf));
         buzzer_play_command_ack();
         return;
     }
@@ -89,6 +100,11 @@ void cmd_import_keys(int argc, char **argv) {
     } else {
         printf("error: import failed\r\n");
     }
+
+    // The pasted blob and its decoded form both carry seeds; scrub them.
+    secure_wipe(b64_buf, sizeof(b64_buf));
+    secure_wipe(line, sizeof(line));
+    secure_wipe(import_buf, sizeof(import_buf));
 
     buzzer_play_command_ack();
 }

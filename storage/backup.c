@@ -1,5 +1,6 @@
 #include "backup.h"
 #include "storage.h"
+#include "shared/wipe.h"
 #include "lfs_util.h"
 
 #include <string.h>
@@ -19,38 +20,36 @@ static uint32_t backup_checksum(const backup_key_t *keys, uint32_t count) {
 // logic model → backup key (fresh checksum)
 // ---------------------------------------------------------------------------
 
-static backup_key_t to_backup_key(const key_record_t *k) {
-    backup_key_t b;
-    b.id         = k->id;
-    b.is_enabled = k->is_enabled;
-    b.is_admin   = k->is_admin;
-    b.created_at = k->created_at;
-    memcpy(b.name, k->name, sizeof(b.name));
-    memcpy(b.secret, k->secret, sizeof(b.secret));
-    return b;
+// Fill via an out-pointer rather than returning by value so the secret never
+// lives in a transient helper-frame copy that would outlast this call.
+static void to_backup_key(const key_record_t *k, backup_key_t *b) {
+    b->id         = k->id;
+    b->is_enabled = k->is_enabled;
+    b->is_admin   = k->is_admin;
+    b->created_at = k->created_at;
+    memcpy(b->name, k->name, sizeof(b->name));
+    memcpy(b->secret, k->secret, sizeof(b->secret));
 }
 
 // ---------------------------------------------------------------------------
 // backup key → logic model
 // ---------------------------------------------------------------------------
 
-static key_record_t to_key_record(const backup_key_t *b) {
-    key_record_t k;
-    k.id = b->id;
+static void to_key_record(const backup_key_t *b, key_record_t *k) {
+    k->id = b->id;
     // The backup blob is untrusted input: its is_enabled/is_admin bytes may hold
     // any value, so read them as raw bytes and canonicalise. Loading a `bool`
     // whose object representation is not 0/1 is undefined behaviour.
     uint8_t enabled_raw, admin_raw;
     memcpy(&enabled_raw, &b->is_enabled, sizeof(enabled_raw));
     memcpy(&admin_raw, &b->is_admin, sizeof(admin_raw));
-    k.is_enabled        = (enabled_raw != 0);
-    k.is_admin          = (admin_raw != 0);
-    k.created_at        = b->created_at;
-    k.is_checksum_valid = true;
-    memcpy(k.name, b->name, sizeof(k.name));
-    k.name[KEY_NAME_MAX - 1] = '\0';
-    memcpy(k.secret, b->secret, sizeof(k.secret));
-    return k;
+    k->is_enabled        = (enabled_raw != 0);
+    k->is_admin          = (admin_raw != 0);
+    k->created_at        = b->created_at;
+    k->is_checksum_valid = true;
+    memcpy(k->name, b->name, sizeof(k->name));
+    k->name[KEY_NAME_MAX - 1] = '\0';
+    memcpy(k->secret, b->secret, sizeof(k->secret));
 }
 
 // ---------------------------------------------------------------------------
@@ -64,8 +63,10 @@ int backup_export(uint8_t *buf, size_t buf_size) {
         return -1;
 
     size_t needed = sizeof(backup_header_t) + count * sizeof(backup_key_t);
-    if (buf_size < needed)
+    if (buf_size < needed) {
+        secure_wipe(records, sizeof(records));
         return -1;
+    }
 
     // Populate backup keys
     backup_key_t *keys               = (backup_key_t *)(buf + sizeof(backup_header_t));
@@ -75,7 +76,7 @@ int backup_export(uint8_t *buf, size_t buf_size) {
             printf("[backup] export: key %u has invalid checksum, skipping\r\n", records[i].id);
             continue;
         }
-        keys[exported_key_count++] = to_backup_key(&records[i]);
+        to_backup_key(&records[i], &keys[exported_key_count++]);
     }
 
     backup_header_t hdr = {
@@ -85,6 +86,10 @@ int backup_export(uint8_t *buf, size_t buf_size) {
         .checksum  = backup_checksum(keys, (uint32_t)exported_key_count),
     };
     memcpy(buf, &hdr, sizeof(hdr));
+
+    // Scrub the resident copy of the key database (seeds included) from BSS.
+    // The caller-owned `buf` still carries the blob and is wiped by the handler.
+    secure_wipe(records, sizeof(records));
 
     return (int)(sizeof(backup_header_t) + exported_key_count * sizeof(backup_key_t));
 }
@@ -159,11 +164,16 @@ bool backup_import(const uint8_t *buf, size_t size) {
     for (int i = 0; i < existing_count; i++) {
         storage_key_delete(existing[i].id);
     }
+    // Only the ids were needed; scrub the resident seeds from BSS.
+    secure_wipe(existing, sizeof(existing));
 
     // Write new keys
     for (uint32_t i = 0; i < hdr->key_count; i++) {
-        key_record_t rec = to_key_record(&keys[i]);
-        if (!storage_key_save(&rec)) {
+        key_record_t rec;
+        to_key_record(&keys[i], &rec);
+        bool ok = storage_key_save(&rec);
+        secure_wipe(&rec, sizeof(rec));
+        if (!ok) {
             printf("[backup] import: failed to write key %u\r\n", keys[i].id);
             return false;
         }
