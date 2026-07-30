@@ -95,6 +95,24 @@ int main(void) {
     /* M5: decoded output exceeding out_cap must be rejected, not written OOB. */
     reject_over_capacity();
 
+    /* Non-canonical padding (L6): '=' is only valid as trailing pad in the
+     * final quad; the last data symbol's unused low bits must be zero. */
+    assert(base64_decode("AA==AAAA", 8, scratch, sizeof scratch) == -1); /* pad in non-final quad */
+    assert(base64_decode("AA=A", 4, scratch, sizeof scratch) == -1); /* pad at pos 2 not pos 3 */
+    assert(base64_decode("=AAA", 4, scratch, sizeof scratch) == -1); /* pad at pos 0           */
+    assert(base64_decode("A=AA", 4, scratch, sizeof scratch) == -1); /* pad at pos 1           */
+    assert(base64_decode("AB==", 4, scratch, sizeof scratch) == -1); /* nonzero trailing bits  */
+    assert(base64_decode("AB=A", 4, scratch, sizeof scratch) == -1); /* pad at 2 w/o 3, nonzero */
+    assert(base64_decode("ABC=", 4, scratch, sizeof scratch) == -1); /* 'C'=2, low 2 bits set  */
+
+    /* Canonical padding still decodes correctly. */
+    assert(base64_decode("AA==", 4, scratch, sizeof scratch) == 1 && scratch[0] == 0x00);
+    assert(base64_decode("Zg==", 4, scratch, sizeof scratch) == 1 && scratch[0] == 'f'); /* "f"  */
+    assert(base64_decode("Zm8=", 4, scratch, sizeof scratch) == 2 &&
+           memcmp(scratch, "fo", 2) == 0); /* "fo" */
+    assert(base64_decode("AAA=", 4, scratch, sizeof scratch) == 2 && scratch[0] == 0x00 &&
+           scratch[1] == 0x00);
+
     printf("base64 roundtrip OK\n");
     return 0;
 }
