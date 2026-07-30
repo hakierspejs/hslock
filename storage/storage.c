@@ -176,8 +176,9 @@ static bool  mounted = false;
 // Directory helpers
 // ---------------------------------------------------------------------------
 
-#define DIR_KEYS  "/keys"
-#define FILE_WIFI "/wifi"
+#define DIR_KEYS     "/keys"
+#define DIR_KEYS_NEW "/keys.new" // staging dir for atomic key_replace_all
+#define FILE_WIFI    "/wifi"
 
 static bool ensure_dirs(void) {
     struct lfs_info info;
@@ -189,6 +190,43 @@ static bool ensure_dirs(void) {
 
 static void key_path(uint16_t id, char *out, size_t out_size) {
     snprintf(out, out_size, DIR_KEYS "/%05u", id);
+}
+
+static void staging_path(uint16_t id, char *out, size_t out_size) {
+    snprintf(out, out_size, DIR_KEYS_NEW "/%05u", id);
+}
+
+// Collect the numeric ids of every regular file directly under `dirpath`.
+// Returns the count, or -1 if the directory can't be opened (e.g. absent).
+static int list_dir_ids(const char *dirpath, uint16_t *ids, int max) {
+    lfs_dir_t dir;
+    if (lfs_dir_open(&lfs, &dir, dirpath) < 0)
+        return -1;
+
+    int             n = 0;
+    struct lfs_info info;
+    while (n < max && lfs_dir_read(&lfs, &dir, &info) > 0) {
+        if (info.type != LFS_TYPE_REG)
+            continue;
+        ids[n++] = (uint16_t)strtoul(info.name, NULL, 10);
+    }
+    lfs_dir_close(&lfs, &dir);
+    return n;
+}
+
+// Remove the staging directory and everything in it. Best effort: used both to
+// discard a half-written import and to clean up after a successful swap.
+static void staging_clear(void) {
+    uint16_t ids[KEY_MAX_COUNT];
+    int      n = list_dir_ids(DIR_KEYS_NEW, ids, KEY_MAX_COUNT);
+    if (n < 0)
+        return; // staging dir absent - nothing to do
+    for (int i = 0; i < n; i++) {
+        char path[40];
+        staging_path(ids[i], path, sizeof(path));
+        lfs_remove(&lfs, path);
+    }
+    lfs_remove(&lfs, DIR_KEYS_NEW);
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +244,9 @@ bool storage_init(void) {
         printf("[storage] ensure_dirs failed\r\n");
         return false;
     }
+
+    // Discard any staging left behind by an import interrupted by power loss.
+    staging_clear();
 
     mounted = true;
     printf("[storage] init ok\r\n");
@@ -380,6 +421,73 @@ bool storage_key_delete(uint16_t id) {
     }
 
     return lfs_remove(&lfs, path) >= 0;
+}
+
+bool storage_key_replace_all(const key_record_t *records, int count) {
+    if (!mounted)
+        return false;
+    if (count < 0 || count > KEY_MAX_COUNT)
+        return false;
+
+    // Discard any leftover staging from a previously interrupted import.
+    staging_clear();
+
+    if (lfs_mkdir(&lfs, DIR_KEYS_NEW) < 0)
+        return false;
+
+    // Stage every new record. If ANY write fails, drop the staging dir and
+    // return - the existing /keys are never touched, so the store is unchanged.
+    for (int i = 0; i < count; i++) {
+        char path[40];
+        staging_path(records[i].id, path, sizeof(path));
+        key_record_stored_t stored;
+        to_stored(&records[i], &stored); // checksum computed here
+
+        lfs_file_t f;
+        int        flags = LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC;
+        if (lfs_file_opencfg(&lfs, &f, path, flags, &LFS_FILE_CFG) < 0) {
+            staging_clear();
+            return false;
+        }
+        lfs_ssize_t n  = lfs_file_write(&lfs, &f, &stored, sizeof(stored));
+        int         cl = lfs_file_close(&lfs, &f);
+        if (n != (lfs_ssize_t)sizeof(stored) || cl < 0) {
+            staging_clear();
+            return false;
+        }
+    }
+
+    // Every new record is now durably staged. Commit the swap: move each staged
+    // file over its final path (lfs_rename is atomic and replaces any existing
+    // file), then prune the old keys that are absent from the new set. The store
+    // is never emptied along the way, so the worst an interrupted commit can do
+    // is leave the (durable) staging copy behind for storage_init() to clean.
+    for (int i = 0; i < count; i++) {
+        char stg[40], final[40];
+        staging_path(records[i].id, stg, sizeof(stg));
+        key_path(records[i].id, final, sizeof(final));
+        lfs_rename(&lfs, stg, final);
+    }
+
+    uint16_t existing_ids[KEY_MAX_COUNT];
+    int      existing_n = list_dir_ids(DIR_KEYS, existing_ids, KEY_MAX_COUNT);
+    for (int i = 0; i < existing_n; i++) {
+        bool keep = false;
+        for (int j = 0; j < count; j++) {
+            if (records[j].id == existing_ids[i]) {
+                keep = true;
+                break;
+            }
+        }
+        if (!keep) {
+            char path[40];
+            key_path(existing_ids[i], path, sizeof(path));
+            lfs_remove(&lfs, path);
+        }
+    }
+
+    staging_clear(); // remove the now-empty staging directory
+    return true;
 }
 
 int storage_key_list(key_record_t *out, int max_count) {

@@ -41,6 +41,16 @@ static uint8_t *flash_ptr(uint32_t flash_offs) {
     return (uint8_t *)(uintptr_t)(XIP_BASE + flash_offs);
 }
 
+/* --- flash-write failure injection ----------------------------------------
+ * When armed, any flash program whose payload contains g_fail_marker fails, as
+ * a NOR write error or a power loss mid-program would: the byte is not written
+ * and flash_safe_execute reports the error up, so the littlefs commit fails.
+ * Used to prove that an import which fails while writing a new record leaves the
+ * ORIGINAL keys intact. */
+static bool    g_fail_armed = false;
+static uint8_t g_fail_marker[8];
+static bool    g_prog_error = false;
+
 /* --- RAM-backed flash primitives storage.c drives ------------------------- */
 
 /* M13 witness: while a delete is in progress, record the longest run of zero
@@ -52,6 +62,14 @@ static volatile int    g_delete_active    = 0;
 static volatile size_t g_del_max_zero_run = 0;
 
 void flash_range_program(uint32_t flash_offs, const uint8_t *data, size_t count) {
+    if (g_fail_armed && count >= sizeof g_fail_marker) {
+        for (size_t i = 0; i + sizeof g_fail_marker <= count; i++) {
+            if (memcmp(data + i, g_fail_marker, sizeof g_fail_marker) == 0) {
+                g_prog_error = true; /* skip the write and fail the op */
+                return;
+            }
+        }
+    }
     uint8_t *dst = flash_ptr(flash_offs);
     if (g_delete_active) {
         size_t run = 0;
@@ -71,7 +89,12 @@ void flash_range_erase(uint32_t flash_offs, size_t count) {
 
 int flash_safe_execute(void (*func)(void *), void *param, uint32_t timeout_ms) {
     (void)timeout_ms;
+    g_prog_error = false;
     func(param);
+    if (g_prog_error) {
+        g_prog_error = false;
+        return PICO_ERROR_TIMEOUT; /* != PICO_OK -> storage.c returns LFS_ERR_IO */
+    }
     return PICO_OK;
 }
 
@@ -420,6 +443,91 @@ int main(void) {
         /* the current filesystem value is gone (remove committed) */
         assert(storage_key_exists(42) == false);
         assert(storage_key_get(42, &tmp) == false);
+    }
+
+    /* --- M6: an import that fails mid-write must NOT wipe the store --------- */
+    /* Old backup_import deleted every key BEFORE writing the new set and bailed
+     * out on the first storage_key_save failure, leaving storage empty/partial
+     * with no rollback. The fix stages the new records first and only removes
+     * the old keys once all staged writes succeed. Prove it: seed a known set,
+     * arm the flash shim to fail while a new record is being written, import a
+     * VALID replacement blob, and assert the ORIGINAL keys are still there. */
+    {
+        /* start from a clean store, then seed three known originals */
+        {
+            key_record_t cur[16];
+            int          cn = storage_key_list(cur, 16);
+            for (int i = 0; i < cn; i++)
+                assert(storage_key_delete(cur[i].id) == true);
+        }
+        key_record_t o1 = make_key(1, "orig-a", true, true, 1700001000u, 0x11);
+        key_record_t o2 = make_key(2, "orig-b", true, false, 1700002000u, 0x22);
+        key_record_t o3 = make_key(3, "orig-c", false, false, 1700003000u, 0x33);
+        assert(storage_key_save(&o1) == true);
+        assert(storage_key_save(&o2) == true);
+        assert(storage_key_save(&o3) == true);
+        assert(storage_key_list(list, 16) == 3);
+
+        /* Build a VALID import blob for a DISJOINT new set {50,51,52}. Each new
+         * record's secret starts at a distinct seed, so the flash shim can fail
+         * exactly on the write of one specific new record. */
+        static uint8_t imp[sizeof(backup_header_t) + 3 * sizeof(backup_key_t)];
+        backup_key_t  *bks = (backup_key_t *)(imp + sizeof(backup_header_t));
+        memset(imp, 0, sizeof imp);
+        const struct {
+            uint16_t id;
+            uint8_t  seed;
+            bool     admin;
+        } spec[3] = {{50, 0x77, true}, {51, 0x88, false}, {52, 0x99, false}};
+        for (int i = 0; i < 3; i++) {
+            bks[i].id         = spec[i].id;
+            bks[i].is_enabled = true;
+            bks[i].is_admin   = spec[i].admin;
+            bks[i].created_at = 1700010000u + spec[i].id;
+            snprintf(bks[i].name, sizeof bks[i].name, "new-%u", spec[i].id);
+            for (int j = 0; j < KEY_SECRET_LEN; j++)
+                bks[i].secret[j] = (uint8_t)(spec[i].seed + j);
+        }
+        backup_header_t ih = {
+            .magic     = BACKUP_MAGIC,
+            .version   = BACKUP_VERSION,
+            .key_count = 3,
+            .checksum  = lfs_crc(0xFFFFFFFF, bks, 3 * sizeof(backup_key_t)),
+        };
+        memcpy(imp, &ih, sizeof ih);
+
+        /* Arm the shim to fail while the SECOND new record (id 51, seed 0x88) is
+         * written - i.e. mid-import, after some progress. With the old code this
+         * point is reached only AFTER every original key was already deleted. */
+        for (int j = 0; j < (int)sizeof g_fail_marker; j++)
+            g_fail_marker[j] = (uint8_t)(0x88 + j);
+        g_fail_armed = true;
+        assert(backup_import(imp, sizeof imp) == false);
+        g_fail_armed = false;
+
+        /* The ORIGINAL keys must all be intact and unchanged... */
+        key_record_t r;
+        assert(storage_key_get(1, &r) == true && keys_equal(&o1, &r));
+        assert(storage_key_get(2, &r) == true && keys_equal(&o2, &r));
+        assert(storage_key_get(3, &r) == true && keys_equal(&o3, &r));
+        assert(storage_key_list(list, 16) == 3);
+        /* ...and NONE of the new keys leaked in. */
+        assert(storage_key_exists(50) == false);
+        assert(storage_key_exists(51) == false);
+        assert(storage_key_exists(52) == false);
+
+        /* Positive control: with the shim disarmed the same blob imports cleanly
+         * and fully swaps the set (old keys pruned, new keys in place). */
+        assert(backup_import(imp, sizeof imp) == true);
+        assert(storage_key_list(list, 16) == 3);
+        assert(storage_key_exists(50) == true);
+        assert(storage_key_exists(51) == true);
+        assert(storage_key_exists(52) == true);
+        assert(storage_key_exists(1) == false);
+        assert(storage_key_exists(2) == false);
+        assert(storage_key_exists(3) == false);
+        assert(storage_key_get(51, &r) == true);
+        assert(r.is_enabled == true && r.is_admin == false);
     }
 
     printf("storage OK\n");
