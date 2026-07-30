@@ -25,6 +25,7 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -32,6 +33,14 @@
 // admin_mode is defined (non-static) in commands.c; drive it directly so we can
 // test the admin gate without going through the real cmd_login/TOTP path.
 extern bool admin_mode;
+
+// Injectable host clock. commands.c calls time_us_64() to arm and check the
+// admin idle-timeout deadline; driving it here lets the idle-timeout test step
+// time deterministically instead of sleeping.
+static uint64_t g_now_us = 0;
+uint64_t        time_us_64(void) {
+    return g_now_us;
+}
 
 // ---------------------------------------------------------------------------
 // Spies
@@ -261,6 +270,43 @@ static void test_on_disconnect_clears_admin(void) {
     assert(!commands_is_admin());
 }
 
+static void test_admin_session_idle_timeout(void) {
+    // A login arms a ~5-min idle window; admin commands inside it run and each
+    // refreshes the deadline, but a command issued after the window has elapsed
+    // is refused and the session is auto-cleared - so a permanently attached
+    // host cannot inherit an old login.
+    g_now_us = 1000;
+    commands_admin_grant(); // login path: enters admin + arms the deadline
+    assert(commands_is_admin());
+
+    // Just inside the window: an admin command runs (and refreshes the deadline).
+    g_now_us = 1000 + ADMIN_IDLE_TIMEOUT_US - 1;
+    run("list-keys", (const char *)NULL);
+    assert(g_last_handler != NULL && strcmp(g_last_handler, "cmd_list_keys") == 0);
+    assert(commands_is_admin());
+
+    // The refresh moved the deadline to now+timeout, so a second command another
+    // (almost) full window later is STILL allowed - total elapsed time already
+    // exceeds one window, proving activity extends the session.
+    g_now_us += ADMIN_IDLE_TIMEOUT_US - 1;
+    run("list-keys", (const char *)NULL);
+    assert(g_last_handler != NULL && strcmp(g_last_handler, "cmd_list_keys") == 0);
+    assert(commands_is_admin());
+
+    // Now go idle past the (refreshed) deadline: the next admin command is
+    // refused and admin mode is auto-cleared.
+    g_now_us += ADMIN_IDLE_TIMEOUT_US + 1;
+    run("list-keys", (const char *)NULL);
+    assert(g_last_handler == NULL); // handler did NOT run
+    assert(!commands_is_admin());   // auto-logged out
+    assert(out_has("expired"));
+
+    // Reset the injected clock to 0 so any deadline a later test's refresh arms
+    // stays in the future (the other tests toggle admin_mode directly).
+    g_now_us   = 0;
+    admin_mode = false;
+}
+
 int main(void) {
     test_routes_public_command();
     test_help_and_alias_route_same_handler();
@@ -275,6 +321,7 @@ int main(void) {
     test_admin_command_with_args_routes_when_admin();
     test_admin_gate_precedes_argc_check();
     test_on_disconnect_clears_admin();
+    test_admin_session_idle_timeout();
 
     printf("harness_commands: all assertions passed\n");
     return 0;
