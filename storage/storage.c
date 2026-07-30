@@ -242,7 +242,15 @@ bool storage_wifi_get(wifi_config_t *out) {
 
     lfs_ssize_t n = lfs_file_read(&lfs, &f, out, sizeof(wifi_config_t));
     lfs_file_close(&lfs, &f);
-    return n == (lfs_ssize_t)sizeof(wifi_config_t);
+    if (n != (lfs_ssize_t)sizeof(wifi_config_t))
+        return false;
+
+    // Defense-in-depth: never trust flash to be NUL-terminated. Both fields
+    // are used directly as C strings (printf("%s"), cyw43 connect), so force a
+    // terminator at the last byte to prevent an over-read past the field.
+    out->ssid[WIFI_SSID_MAX - 1]         = '\0';
+    out->password[WIFI_PASSWORD_MAX - 1] = '\0';
+    return true;
 }
 
 bool storage_wifi_set(const wifi_config_t *cfg) {
