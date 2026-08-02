@@ -35,7 +35,6 @@ typedef struct {
     int         max_args;
     const char *usage;
     const char *description;
-    void (*handler)(int argc, char **argv);
 } command_t;
 
 // ---------------------------------------------------------------------------
@@ -100,6 +99,8 @@ static void (*const HANDLERS[])(int, char **) = {
     cmd_enable_key,  cmd_disable_key, cmd_delete_key,     cmd_set_key_admin, cmd_unset_key_admin,
     cmd_export_keys, cmd_import_keys, cmd_format_storage,
 };
+
+_Static_assert(sizeof(HANDLERS) / sizeof(HANDLERS[0]) == NUM_COMMANDS, "table/handler mismatch");
 
 // ---------------------------------------------------------------------------
 // Dispatch
