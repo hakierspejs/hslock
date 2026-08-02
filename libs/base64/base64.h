@@ -15,8 +15,10 @@
 void base64_encode(const unsigned char *in, size_t in_len, char *out);
 
 // Decode base64 string to binary.
-// out must be at least BASE64_DECODED_LEN(in_len) bytes.
-// Returns number of decoded bytes, or -1 on invalid input.
-int base64_decode(const char *in, size_t in_len, unsigned char *out);
+// out must be at least BASE64_DECODED_LEN(in_len) bytes; out_cap is the number
+// of bytes available at out. Returns number of decoded bytes, or -1 on invalid
+// input or if the decoded output would exceed out_cap (no bytes past out_cap
+// are ever written).
+int base64_decode(const char *in, size_t in_len, unsigned char *out, size_t out_cap);
 
 #endif

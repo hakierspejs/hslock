@@ -69,7 +69,8 @@ void cmd_import_keys(int argc, char **argv) {
     // Read base64 directly from serial into a large static buffer
     static char b64_buf[BASE64_ENCODED_LEN(sizeof(backup_header_t) +
                                            BACKUP_MAX_KEYS * sizeof(backup_key_t))];
-    int         b64_len = 0;
+    int         b64_len  = 0;
+    bool        overflow = false;
     char        line[256];
     int         line_len = 0;
 
@@ -85,9 +86,14 @@ void cmd_import_keys(int argc, char **argv) {
         if (c == '\n') {
             if (line_len == 0)
                 break; // empty line = done
+            // M5: an over-long paste must ABORT the import, not be silently
+            // dropped - a truncated blob decoded into import_buf is meaningless
+            // and previously masked the length that overflows the decode buffer.
             if (b64_len + line_len < (int)sizeof(b64_buf)) {
                 memcpy(b64_buf + b64_len, line, line_len);
                 b64_len += line_len;
+            } else {
+                overflow = true;
             }
             line_len = 0;
         } else {
@@ -95,6 +101,12 @@ void cmd_import_keys(int argc, char **argv) {
                 line[line_len++] = (char)c;
             }
         }
+    }
+
+    if (overflow) {
+        printf("error: import data too large\r\n");
+        buzzer_play_command_ack();
+        return;
     }
 
     if (b64_len == 0) {
@@ -105,7 +117,16 @@ void cmd_import_keys(int argc, char **argv) {
 
     static uint8_t import_buf[sizeof(backup_header_t) + BACKUP_MAX_KEYS * sizeof(backup_key_t)];
 
-    int len = base64_decode(b64_buf, b64_len, import_buf);
+    // M5: reject up front any blob whose decoded length cannot fit import_buf,
+    // before feeding it to the decoder. base64_decode is also capacity-bounded
+    // (defence in depth), but rejecting here gives the operator a clear error.
+    if (BASE64_DECODED_LEN((size_t)b64_len) > sizeof(import_buf)) {
+        printf("error: import data too large\r\n");
+        buzzer_play_command_ack();
+        return;
+    }
+
+    int len = base64_decode(b64_buf, (size_t)b64_len, import_buf, sizeof(import_buf));
     if (len < 0) {
         printf("error: invalid base64\r\n");
         buzzer_play_command_ack();
