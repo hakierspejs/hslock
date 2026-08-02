@@ -7,6 +7,16 @@
 #include <string.h>
 #include <stdbool.h>
 
+// Zero a wifi_config_t through a volatile pointer so the compiler cannot
+// optimise the wipe away once the struct (which holds the WiFi password) is
+// no longer live. The password would otherwise linger on the core-0 stack.
+static void wifi_config_wipe(wifi_config_t *cfg) {
+    volatile char *p = (volatile char *)cfg;
+    for (size_t i = 0; i < sizeof(*cfg); i++) {
+        p[i] = 0;
+    }
+}
+
 void cmd_sync_ntp(int argc, char **argv) {
     printf("syncing...\r\n");
     if (ntp_sync()) {
@@ -18,7 +28,7 @@ void cmd_sync_ntp(int argc, char **argv) {
 }
 
 void cmd_set_wifi(int argc, char **argv) {
-    wifi_config_t cfg;
+    wifi_config_t cfg = {0};
 
     if (strlen(argv[1]) >= WIFI_SSID_MAX) {
         printf("error: ssid too long (max %d chars)\r\n", WIFI_SSID_MAX - 1);
@@ -39,6 +49,7 @@ void cmd_set_wifi(int argc, char **argv) {
     bool ok = storage_wifi_set(&cfg);
     printf("storage_wifi_set: %s\r\n", ok ? "ok" : "FAILED");
     if (!ok) {
+        wifi_config_wipe(&cfg);
         buzzer_play_command_ack();
         return;
     }
@@ -55,5 +66,6 @@ void cmd_set_wifi(int argc, char **argv) {
         printf("wifi connect failed\r\n");
     }
 
+    wifi_config_wipe(&cfg);
     buzzer_play_command_ack();
 }
