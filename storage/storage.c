@@ -326,6 +326,39 @@ bool storage_key_delete(uint16_t id) {
         return false;
     char path[40];
     key_path(id, path, sizeof(path));
+
+    // Secure-erase hygiene (M13): overwrite the record's bytes with zeros and
+    // sync BEFORE removing it, so the NEWEST inline value in the append-only
+    // /keys metadata log is zeros rather than the secret. Without this,
+    // lfs_remove only appends a delete tag and the last-written record — still
+    // holding the plaintext secret — stays the freshest inline copy of that
+    // file until the block pair is compacted and the stale sector erased.
+    //
+    // This does NOT scrub the stale copies already appended to the log by prior
+    // writes; only storage_format() guarantees erasure (see docs/COMMANDS.md).
+    // It does ensure a revoked key's current on-flash value is no longer its
+    // secret, which is correct revocation hygiene. Best-effort: if the overwrite
+    // fails we still fall through to lfs_remove so the key is at least unlinked.
+    lfs_file_t f;
+    if (lfs_file_opencfg(&lfs, &f, path, LFS_O_WRONLY, &LFS_FILE_CFG) >= 0) {
+        lfs_soff_t size = lfs_file_size(&lfs, &f);
+        if (size > 0) {
+            // A record never exceeds sizeof(key_record_stored_t) (the on-flash
+            // layout); loop anyway so an unexpected size still clears fully.
+            uint8_t    zeros[sizeof(key_record_stored_t)] = {0};
+            lfs_soff_t remaining                          = size;
+            while (remaining > 0) {
+                lfs_size_t chunk = remaining > (lfs_soff_t)sizeof(zeros) ? (lfs_size_t)sizeof(zeros)
+                                                                         : (lfs_size_t)remaining;
+                if (lfs_file_write(&lfs, &f, zeros, chunk) < 0)
+                    break;
+                remaining -= chunk;
+            }
+            lfs_file_sync(&lfs, &f);
+        }
+        lfs_file_close(&lfs, &f);
+    }
+
     return lfs_remove(&lfs, path) >= 0;
 }
 
