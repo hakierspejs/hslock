@@ -2,6 +2,7 @@
 #include "hardware/buzzer.h"
 #include "hardware/clock.h"
 #include "shared/random.h"
+#include "shared/wipe.h"
 #include "storage/backup.h"
 #include "storage/storage.h"
 #include "base32.h"
@@ -45,6 +46,10 @@ void cmd_list_keys(int argc, char **argv) {
     }
 
     printf("\r\n%d key(s)\r\n", count);
+
+    // Scrub the resident key database (seeds included) from BSS.
+    secure_wipe(keys, sizeof(keys));
+
     buzzer_play_command_ack();
 }
 
@@ -79,6 +84,8 @@ void cmd_get_key(int argc, char **argv) {
     printf("created: %s\r\n", created);
     // Deliberately no secret dump here: use get-key-secret to read the seed.
 
+    secure_wipe(&key, sizeof(key));
+
     buzzer_play_command_ack();
 }
 
@@ -105,6 +112,7 @@ void cmd_get_key_secret(int argc, char **argv) {
 
     if (!key.is_checksum_valid) {
         printf("error: key %u is corrupt\r\n", id);
+        secure_wipe(&key, sizeof(key));
         buzzer_play_command_ack();
         return;
     }
@@ -129,6 +137,9 @@ void cmd_get_key_secret(int argc, char **argv) {
                                    qrcodegen_VERSION_MAX, qrcodegen_Mask_AUTO, true);
     if (!ok) {
         printf("error: QR generation failed\r\n");
+        secure_wipe(&key, sizeof(key));
+        secure_wipe(secret_b32, sizeof(secret_b32));
+        secure_wipe(uri, sizeof(uri));
         buzzer_play_command_ack();
         return;
     }
@@ -143,6 +154,11 @@ void cmd_get_key_secret(int argc, char **argv) {
         printf("\r\n");
     }
     printf("\r\n");
+
+    // Scrub the seed and its base32/otpauth renderings from the stack.
+    secure_wipe(&key, sizeof(key));
+    secure_wipe(secret_b32, sizeof(secret_b32));
+    secure_wipe(uri, sizeof(uri));
 
     buzzer_play_command_ack();
 }
@@ -185,6 +201,9 @@ void cmd_add_key(int argc, char **argv) {
         printf("error: failed to save key %u\r\n", id);
     }
 
+    // Scrub the freshly generated seed from the stack.
+    secure_wipe(&key, sizeof(key));
+
     buzzer_play_command_ack();
 }
 
@@ -219,6 +238,8 @@ void cmd_rename_key(int argc, char **argv) {
         printf("error: failed to save key %u\r\n", id);
     }
 
+    secure_wipe(&key, sizeof(key));
+
     buzzer_play_command_ack();
 }
 
@@ -240,6 +261,7 @@ void cmd_enable_key(int argc, char **argv) {
 
     if (key.is_enabled) {
         printf("key %u is already enabled\r\n", id);
+        secure_wipe(&key, sizeof(key));
         buzzer_play_command_ack();
         return;
     }
@@ -250,6 +272,8 @@ void cmd_enable_key(int argc, char **argv) {
     } else {
         printf("error: failed to save key %u\r\n", id);
     }
+
+    secure_wipe(&key, sizeof(key));
 
     buzzer_play_command_ack();
 }
@@ -272,6 +296,7 @@ void cmd_disable_key(int argc, char **argv) {
 
     if (!key.is_enabled) {
         printf("key %u is already disabled\r\n", id);
+        secure_wipe(&key, sizeof(key));
         buzzer_play_command_ack();
         return;
     }
@@ -282,6 +307,8 @@ void cmd_disable_key(int argc, char **argv) {
     } else {
         printf("error: failed to save key %u\r\n", id);
     }
+
+    secure_wipe(&key, sizeof(key));
 
     buzzer_play_command_ack();
 }
@@ -328,6 +355,7 @@ void cmd_set_key_admin(int argc, char **argv) {
 
     if (key.is_admin) {
         printf("key %u is already admin\r\n", id);
+        secure_wipe(&key, sizeof(key));
         buzzer_play_command_ack();
         return;
     }
@@ -338,6 +366,8 @@ void cmd_set_key_admin(int argc, char **argv) {
     } else {
         printf("error: failed to save key %u\r\n", id);
     }
+
+    secure_wipe(&key, sizeof(key));
 
     buzzer_play_command_ack();
 }
@@ -360,6 +390,7 @@ void cmd_unset_key_admin(int argc, char **argv) {
 
     if (!key.is_admin) {
         printf("key %u is not admin\r\n", id);
+        secure_wipe(&key, sizeof(key));
         buzzer_play_command_ack();
         return;
     }
@@ -370,6 +401,8 @@ void cmd_unset_key_admin(int argc, char **argv) {
     } else {
         printf("error: failed to save key %u\r\n", id);
     }
+
+    secure_wipe(&key, sizeof(key));
 
     buzzer_play_command_ack();
 }

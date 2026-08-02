@@ -1,5 +1,6 @@
 #include "storage.h"
 
+#include "shared/wipe.h"
 #include "lfs.h"
 #include "lfs_util.h"
 #include "pico/stdlib.h"
@@ -60,29 +61,27 @@ static uint32_t key_checksum(const key_record_stored_t *key) {
     return crc;
 }
 
-static key_record_stored_t to_stored(const key_record_t *k) {
-    key_record_stored_t s;
-    s.id         = k->id;
-    s.is_enabled = k->is_enabled;
-    s.is_admin   = k->is_admin;
-    s.created_at = k->created_at;
-    memcpy(s.name, k->name, sizeof(s.name));
-    memcpy(s.secret, k->secret, sizeof(s.secret));
-    s.checksum = key_checksum(&s);
-    return s;
+// Fill via an out-pointer rather than returning by value so the secret never
+// lives in a transient helper-frame copy that would outlast this call.
+static void to_stored(const key_record_t *k, key_record_stored_t *s) {
+    s->id         = k->id;
+    s->is_enabled = k->is_enabled;
+    s->is_admin   = k->is_admin;
+    s->created_at = k->created_at;
+    memcpy(s->name, k->name, sizeof(s->name));
+    memcpy(s->secret, k->secret, sizeof(s->secret));
+    s->checksum = key_checksum(s);
 }
 
-static key_record_t to_record(const key_record_stored_t *s) {
-    key_record_t k;
-    k.id                = s->id;
-    k.is_enabled        = s->is_enabled;
-    k.is_admin          = s->is_admin;
-    k.created_at        = s->created_at;
-    k.is_checksum_valid = (s->checksum == key_checksum(s));
-    memcpy(k.name, s->name, sizeof(k.name));
-    k.name[KEY_NAME_MAX - 1] = '\0';
-    memcpy(k.secret, s->secret, sizeof(k.secret));
-    return k;
+static void to_record(const key_record_stored_t *s, key_record_t *k) {
+    k->id                = s->id;
+    k->is_enabled        = s->is_enabled;
+    k->is_admin          = s->is_admin;
+    k->created_at        = s->created_at;
+    k->is_checksum_valid = (s->checksum == key_checksum(s));
+    memcpy(k->name, s->name, sizeof(k->name));
+    k->name[KEY_NAME_MAX - 1] = '\0';
+    memcpy(k->secret, s->secret, sizeof(k->secret));
 }
 
 // ---------------------------------------------------------------------------
@@ -300,10 +299,15 @@ bool storage_key_get(uint16_t id, key_record_t *out) {
     key_record_stored_t stored;
     lfs_ssize_t         n = lfs_file_read(&lfs, &f, &stored, sizeof(stored));
     lfs_file_close(&lfs, &f);
-    if (n != (lfs_ssize_t)sizeof(stored))
+    if (n != (lfs_ssize_t)sizeof(stored)) {
+        secure_wipe(&stored, sizeof(stored));
         return false;
+    }
 
-    *out = to_record(&stored);
+    to_record(&stored, out);
+    // The stored record (secret included) is no longer needed: scrub it so the
+    // seed doesn't linger on the stack after this read.
+    secure_wipe(&stored, sizeof(stored));
 
     if (!out->is_checksum_valid)
         printf("[storage] key %u checksum mismatch\r\n", id);
@@ -319,16 +323,22 @@ bool storage_key_save(const key_record_t *key) {
     char path[40];
     key_path(key->id, path, sizeof(path));
 
-    key_record_stored_t stored = to_stored(key); // checksum computed here
+    key_record_stored_t stored;
+    to_stored(key, &stored); // checksum computed here
 
     lfs_file_t f;
     int        flags = LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC;
-    if (lfs_file_opencfg(&lfs, &f, path, flags, &LFS_FILE_CFG) < 0)
+    if (lfs_file_opencfg(&lfs, &f, path, flags, &LFS_FILE_CFG) < 0) {
+        secure_wipe(&stored, sizeof(stored));
         return false;
+    }
 
     lfs_ssize_t n = lfs_file_write(&lfs, &f, &stored, sizeof(stored));
     lfs_file_close(&lfs, &f);
-    return n == (lfs_ssize_t)sizeof(stored);
+    bool ok = n == (lfs_ssize_t)sizeof(stored);
+    // Scrub the serialised record (secret included) from the stack.
+    secure_wipe(&stored, sizeof(stored));
+    return ok;
 }
 
 bool storage_key_delete(uint16_t id) {
