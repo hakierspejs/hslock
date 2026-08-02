@@ -1,4 +1,5 @@
 #include "commands_handlers.h"
+#include "commands.h"
 #include "hardware/buzzer.h"
 #include "hardware/clock.h"
 #include "hardware/latch.h"
@@ -31,14 +32,16 @@ void cmd_status(int argc, char **argv) {
     uint64_t up_s = time_us_64() / 1000000ULL;
     printf("uptime:    %lluh %llum %llus\r\n", up_s / 3600, (up_s % 3600) / 60, up_s % 60);
 
-    // Board ID
-    pico_unique_board_id_t board_id;
-    pico_get_unique_board_id(&board_id);
-    printf("board id:  ");
-    for (int i = 0; i < PICO_UNIQUE_BOARD_ID_SIZE_BYTES; i++) {
-        printf("%02X", board_id.id[i]);
+    // Board ID (admin only: unique per-device identifier is target-selection data)
+    if (commands_is_admin()) {
+        pico_unique_board_id_t board_id;
+        pico_get_unique_board_id(&board_id);
+        printf("board id:  ");
+        for (int i = 0; i < PICO_UNIQUE_BOARD_ID_SIZE_BYTES; i++) {
+            printf("%02X", board_id.id[i]);
+        }
+        printf("\r\n");
     }
-    printf("\r\n");
 
     // WiFi
     wifi_config_t wifi;
@@ -59,17 +62,19 @@ void cmd_status(int argc, char **argv) {
         printf("ntp:       not synced\r\n");
     }
 
-    // Keys
-    static key_record_t keys[BACKUP_MAX_KEYS];
-    int                 count   = storage_key_list(keys, BACKUP_MAX_KEYS);
-    int                 enabled = 0, corrupt = 0;
-    for (int i = 0; i < count; i++) {
-        if (!keys[i].is_checksum_valid)
-            corrupt++;
-        else if (keys[i].is_enabled)
-            enabled++;
+    // Keys (admin only: key inventory is target-selection data)
+    if (commands_is_admin()) {
+        static key_record_t keys[BACKUP_MAX_KEYS];
+        int                 count   = storage_key_list(keys, BACKUP_MAX_KEYS);
+        int                 enabled = 0, corrupt = 0;
+        for (int i = 0; i < count; i++) {
+            if (!keys[i].is_checksum_valid)
+                corrupt++;
+            else if (keys[i].is_enabled)
+                enabled++;
+        }
+        printf("keys:      %d total, %d enabled, %d corrupt\r\n", count, enabled, corrupt);
     }
-    printf("keys:      %d total, %d enabled, %d corrupt\r\n", count, enabled, corrupt);
 
     buzzer_play_command_ack();
 }
