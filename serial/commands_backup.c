@@ -27,6 +27,39 @@ void cmd_export_keys(int argc, char **argv) {
 }
 
 void cmd_import_keys(int argc, char **argv) {
+    // M3: importing overwrites every key (delete-all then rewrite) and is as
+    // destructive as format-storage, yet ran with no confirmation. Gate it
+    // behind an explicit CONFIRM (admin-only command, so a literal token is
+    // sufficient) - mirrors cmd_format_storage's prompt.
+    printf("*** WARNING: import overwrites ALL current keys ***\r\n");
+    printf("type CONFIRM to proceed: ");
+    fflush(stdout);
+
+    char            confirm[10]      = {0};
+    int             confirm_len      = 0;
+    absolute_time_t confirm_deadline = make_timeout_time_ms(15000);
+
+    while (!time_reached(confirm_deadline) && confirm_len < 7) {
+        int c = getchar_timeout_us(0);
+        if (c == PICO_ERROR_TIMEOUT) {
+            sleep_ms(10);
+            continue;
+        }
+        if (c == '\r' || c == '\n') {
+            printf("\r\n");
+            break;
+        }
+        putchar(c);
+        fflush(stdout);
+        confirm[confirm_len++] = (char)c;
+    }
+
+    if (strncmp(confirm, "CONFIRM", 7) != 0) {
+        printf("error: aborted\r\n");
+        buzzer_play_command_ack();
+        return;
+    }
+
     // Backup first
     printf("backing up current keys...\r\n");
     cmd_export_keys(0, NULL);

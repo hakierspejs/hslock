@@ -165,7 +165,7 @@ int main(void) {
 
     /* --- multiple keys + list --------------------------------------------- */
     key_record_t k2 = make_key(2, "bob", true, false, 1700000200u, 0x30);
-    key_record_t k3 = make_key(3, "carol", false, true, 1700000300u, 0x40);
+    key_record_t k3 = make_key(3, "carol", true, true, 1700000300u, 0x40);
     assert(storage_key_save(&k2) == true);
     assert(storage_key_save(&k3) == true);
 
@@ -276,14 +276,60 @@ int main(void) {
     /* The store still holds the good import after all rejected attempts. */
     assert(storage_key_list(list, 16) == expect_n);
 
-    /* --- empty backup (no keys) roundtrips -------------------------------- */
-    for (int i = 0; i < expect_n; i++)
-        assert(storage_key_delete(expect[i].id) == true);
-    assert(storage_key_list(list, 16) == 0);
-    int elen = backup_export(backup, sizeof backup);
-    assert((size_t)elen == sizeof(backup_header_t));
-    assert(backup_import(backup, (size_t)elen) == true);
-    assert(storage_key_list(list, 16) == 0);
+    /* --- M3: empty / admin-less imports rejected before wiping keys ------- */
+    /* Regression for the fail-open wipe. A key_count==0 blob (backup_checksum
+     * over zero records is 0xFFFFFFFF, so it once cleared every gate), and a
+     * well-formed checksum-valid blob carrying no enabled+admin record, both
+     * let the unconditional delete loop strand the device with no admin key
+     * (any_admin == false -> cmd_login hands out admin to any credentials).
+     * Both must now be refused BEFORE any key is touched; a blob with >= 1
+     * enabled admin still imports. */
+    assert(storage_key_list(list, 16) == expect_n); /* keys 1 & 3 present */
+
+    /* (a) zero-key blob: rejected, existing keys untouched. */
+    {
+        uint8_t         empty[sizeof(backup_header_t)];
+        backup_header_t eh = {.magic     = BACKUP_MAGIC,
+                              .version   = BACKUP_VERSION,
+                              .key_count = 0,
+                              .checksum  = 0xFFFFFFFFu}; /* lfs_crc(~0,x,0)==~0 */
+        memcpy(empty, &eh, sizeof eh);
+        assert(backup_import(empty, sizeof empty) == false);
+        assert(storage_key_list(list, 16) == expect_n);
+    }
+
+    /* (b) one enabled-but-non-admin key: rejected before the delete loop. */
+    {
+        static uint8_t blob[sizeof(backup_header_t) + sizeof(backup_key_t)];
+        backup_key_t  *rec = (backup_key_t *)(blob + sizeof(backup_header_t));
+        backup_key_t   bk  = {0};
+        bk.id              = 50;
+        snprintf(bk.name, sizeof bk.name, "user");
+        memset(bk.secret, 0x11, sizeof bk.secret);
+        bk.is_enabled = true;
+        bk.is_admin   = false;
+        bk.created_at = 1700009000u;
+        memcpy(rec, &bk, sizeof bk);
+        backup_header_t bh = {.magic     = BACKUP_MAGIC,
+                              .version   = BACKUP_VERSION,
+                              .key_count = 1,
+                              .checksum  = lfs_crc(0xFFFFFFFF, rec, sizeof(backup_key_t))};
+        memcpy(blob, &bh, sizeof bh);
+        assert(backup_import(blob, sizeof blob) == false);
+        assert(storage_key_list(list, 16) == expect_n); /* untouched */
+
+        /* (c) same blob, now enabled + admin -> import succeeds, replaces store. */
+        rec->is_admin = true;
+        bh.checksum   = lfs_crc(0xFFFFFFFF, rec, sizeof(backup_key_t));
+        memcpy(blob, &bh, sizeof bh);
+        assert(backup_import(blob, sizeof blob) == true);
+        assert(storage_key_list(list, 16) == 1);
+        key_record_t g;
+        assert(storage_key_get(50, &g) == true);
+        assert(g.is_admin == true && g.is_enabled == true);
+        assert(storage_key_delete(50) == true);
+    }
+    assert(storage_key_list(list, 16) == 0); /* store empty for the UBSan block */
 
     /* --- UBSan regression: non-bool flag byte in an otherwise-valid blob --- */
     /* to_key_record() must not load is_enabled/is_admin straight into a `bool`:

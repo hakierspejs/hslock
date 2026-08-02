@@ -115,6 +115,16 @@ bool backup_import(const uint8_t *buf, size_t size) {
         return false;
     }
 
+    // M3: an empty backup (key_count == 0) once cleared every gate
+    // (backup_checksum over zero records is 0xFFFFFFFF) yet the delete loop
+    // below runs unconditionally - importing it would wipe every key and
+    // strand the device with no admin (any_admin == false -> fail-open
+    // bootstrap login). Refuse before touching storage.
+    if (hdr->key_count < 1) {
+        printf("[backup] import: empty backup refused\r\n");
+        return false;
+    }
+
     size_t expected = sizeof(backup_header_t) + hdr->key_count * sizeof(backup_key_t);
     if (size < expected) {
         printf("[backup] import: truncated data\r\n");
@@ -151,6 +161,29 @@ bool backup_import(const uint8_t *buf, size_t size) {
             printf("[backup] import: key %u has invalid id (max %u)\r\n", keys[i].id, KEY_ID_MAX);
             return false;
         }
+    }
+
+    // M3: require at least one enabled + admin record before wiping anything.
+    // cmd_login treats a store with no enabled admin key (any_admin == false)
+    // as unprovisioned and hands out admin access to any credentials. An
+    // import that leaves the device admin-less therefore opens a permanent
+    // credential-free backdoor. Scan the (already range/name-validated,
+    // checksum-verified) records - canonicalising the untrusted flag bytes the
+    // same way to_key_record() does - and reject, touching nothing, if none
+    // qualifies.
+    bool has_admin = false;
+    for (uint32_t i = 0; i < hdr->key_count; i++) {
+        uint8_t enabled_raw, admin_raw;
+        memcpy(&enabled_raw, &keys[i].is_enabled, sizeof(enabled_raw));
+        memcpy(&admin_raw, &keys[i].is_admin, sizeof(admin_raw));
+        if (enabled_raw != 0 && admin_raw != 0) {
+            has_admin = true;
+            break;
+        }
+    }
+    if (!has_admin) {
+        printf("[backup] import: no enabled admin key in backup - refused\r\n");
+        return false;
     }
 
     // Checksum valid - delete existing keys
