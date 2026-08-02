@@ -179,6 +179,14 @@ int main(void) {
     int nbig = storage_key_list(list, KEY_MAX_COUNT + 100);
     assert(nbig == 3);
 
+    /* --- out-of-range id rejected (L7) ------------------------------------ */
+    /* storage_key_save must refuse ids above KEY_ID_MAX so an unmanageable
+     * (get/delete/unset-admin gate on id > KEY_ID_MAX) key can never persist. */
+    key_record_t kbad = make_key(KEY_ID_MAX + 1, "evil", true, true, 1700000400u, 0x50);
+    assert(storage_key_save(&kbad) == false);
+    assert(storage_key_exists(KEY_ID_MAX + 1) == false);
+    assert(storage_key_list(list, 16) == 3); /* still only the 3 valid keys */
+
     /* --- delete + get-after-delete ---------------------------------------- */
     assert(storage_key_delete(2) == true);
     assert(storage_key_exists(2) == false);
