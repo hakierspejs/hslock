@@ -49,9 +49,19 @@
 #define LWIP_UDP                   1
 #define LWIP_DNS                   1
 #define LWIP_TCP_KEEPALIVE         1
-#define LWIP_NETIF_TX_SINGLE_PBUF  1
-#define DHCP_DOES_ARP_CHECK        0
-#define LWIP_DHCP_DOES_ACD_CHECK   0
+
+/*
+ * M9: seed lwIP's PRNG from the RP2040 hardware RNG. Without LWIP_RAND, lwIP
+ * falls back to ((u32_t)rand()) and nothing calls srand(), so the DNS
+ * transaction ID / source port and the DHCP xid are identical on every boot,
+ * making off-path DNS poisoning of pool.ntp.org feasible. pico_rand is already
+ * linked and this header is consumed only by firmware translation units.
+ */
+#include "pico/rand.h"
+#define LWIP_RAND()               ((u32_t)get_rand_32())
+#define LWIP_NETIF_TX_SINGLE_PBUF 1
+#define DHCP_DOES_ARP_CHECK       0
+#define LWIP_DHCP_DOES_ACD_CHECK  0
 
 #ifndef NDEBUG
 #define LWIP_DEBUG         1
