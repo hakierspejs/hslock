@@ -43,6 +43,9 @@ static bool     synced                 = false;
 static uint32_t last_sync_unix         = 0;
 static uint64_t last_sync_monotonic_us = 0;
 
+// Cumulative backward slack consumed since boot (see NTP_ROLLBACK_BUDGET_S).
+static uint32_t rollback_budget_used_s = 0;
+
 // ---------------------------------------------------------------------------
 // Rollback protection
 // ---------------------------------------------------------------------------
@@ -53,11 +56,40 @@ static bool rollback_check(uint32_t new_time) {
 
     uint64_t elapsed_us = time_us_64() - last_sync_monotonic_us;
     uint32_t elapsed_s  = (uint32_t)(elapsed_us / 1000000ULL);
-    uint32_t floor      = last_sync_unix + elapsed_s - NTP_ROLLBACK_EPSILON_S;
 
+    // Where the monotonic clock says we should be now, in saturating arithmetic
+    // so a huge elapsed_s can't wrap the projection around to a small value.
+    uint32_t projected =
+        (last_sync_unix > UINT32_MAX - elapsed_s) ? UINT32_MAX : last_sync_unix + elapsed_s;
+
+    // Lower bound: at most NTP_ROLLBACK_EPSILON_S below the projection, computed
+    // saturating so it never underflows to ~4.29e9 and freezes a bogus floor.
+    uint32_t floor = (projected > NTP_ROLLBACK_EPSILON_S) ? projected - NTP_ROLLBACK_EPSILON_S : 0;
     if (new_time < floor) {
         printf("[ntp] rollback rejected: got %u, floor is %u\r\n", new_time, floor);
         return false;
+    }
+
+    // Upper bound: cap a single forward step so one on-path packet can't jump
+    // the clock far ahead of the projection (the sane band catches only the
+    // wildest jumps).
+    if (projected <= UINT32_MAX - NTP_MAX_FORWARD_STEP_S &&
+        new_time > projected + NTP_MAX_FORWARD_STEP_S) {
+        printf("[ntp] forward jump rejected: got %u, projected %u\r\n", new_time, projected);
+        return false;
+    }
+
+    // Cumulative backward budget: charge any correction that lands below the
+    // projection; reject once the per-boot budget is exhausted so repeated
+    // small rollbacks can't walk the clock back without bound.
+    if (new_time < projected) {
+        uint32_t backstep = projected - new_time;
+        if (backstep > NTP_ROLLBACK_BUDGET_S - rollback_budget_used_s) {
+            printf("[ntp] rollback budget exhausted: used %u, want %u more\r\n",
+                   rollback_budget_used_s, backstep);
+            return false;
+        }
+        rollback_budget_used_s += backstep;
     }
 
     return true;
@@ -131,6 +163,14 @@ static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip
 
     uint32_t seconds_since_1900 = ((uint32_t)buf[40] << 24) | ((uint32_t)buf[41] << 16) |
                                   ((uint32_t)buf[42] << 8) | (uint32_t)buf[43];
+
+    // Guard the epoch subtraction: a value below NTP_DELTA (pre-1970, e.g. a
+    // spoofed 0) would wrap to the far future instead of rejecting.
+    if (seconds_since_1900 < NTP_DELTA) {
+        printf("[ntp] timestamp before unix epoch: %u\r\n", seconds_since_1900);
+        ntp_state = NTP_STATE_FAILED;
+        return;
+    }
 
     uint32_t unix_time = seconds_since_1900 - NTP_DELTA;
 

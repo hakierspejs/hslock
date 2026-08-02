@@ -138,6 +138,11 @@ void rtc_init(void) {
 }
 void buzzer_play_ntp_sync_error(void) {
 }
+/* ntp_task() gates resync on this; scenario (3) drives the due-for-resync arm,
+ * so report "connected" to let ntp_task reach the ntp_sync() (pcb-fail) path. */
+bool wifi_is_connected(void) {
+    return true;
+}
 
 /* --- the target, static functions and file-static state now in scope ------ */
 #include "../network/ntp.c"
@@ -149,6 +154,7 @@ static void reset_ntp_state(void) {
     synced                 = false;
     last_sync_unix         = 0;
     last_sync_monotonic_us = 0;
+    rollback_budget_used_s = 0;
     ntp_state              = NTP_STATE_IDLE;
     g_applied_called       = 0;
     g_applied_unix         = 0;
@@ -171,13 +177,19 @@ static void feed(const uint8_t *bytes, size_t len) {
         .len     = (u16_t)len,
         .tot_len = (u16_t)len,
     };
-    ntp_recv_cb(NULL, NULL, &p, NULL, 123);
+    /* Present a source that matches ntp.c's connected server_addr so the parse
+     * clears the belt-and-suspenders source check (lwip's udp_connect already
+     * filters on hardware; here we drive the callback directly). */
+    server_addr.addr = 0x0100007fu; /* 127.0.0.1, LE */
+    ip_addr_t src    = server_addr;
+    ntp_recv_cb(NULL, NULL, &p, &src, 123);
 }
 
 /* Build a 48-byte NTP response whose transmit timestamp decodes to unix_time. */
 static void make_ntp_packet(uint8_t pkt[48], uint32_t unix_time) {
     memset(pkt, 0, 48);
     pkt[0]                      = 0x1C; /* LI=0, VN=3, Mode=4 (server) */
+    pkt[1]                      = 1;    /* stratum 1 (valid: 1..15) */
     uint32_t seconds_since_1900 = unix_time + NTP_DELTA;
     pkt[40]                     = (uint8_t)(seconds_since_1900 >> 24);
     pkt[41]                     = (uint8_t)(seconds_since_1900 >> 16);
@@ -232,6 +244,56 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     assert(g_applied_unix == floor + 100u);
     assert(ntp_state == NTP_STATE_SUCCESS);
     assert(synced && last_sync_unix == floor + 100u);
+
+    /* (2b) H3 guards, driven deterministically every run.
+     * Underflow guard: seconds_since_1900 < NTP_DELTA must reject, not wrap to
+     * the far future. Build the raw field directly (make_ntp_packet only
+     * produces post-epoch values). Bytes 24..31 stay zero == the unset nonce. */
+    reset_ntp_state();
+    g_time_us = 0;
+    uint8_t under[48];
+    memset(under, 0, 48);
+    under[0]  = 0x1C; /* LI=0, VN=3, Mode=4 (server) */
+    under[1]  = 1;    /* stratum 1 (valid) */
+    under[43] = 100;  /* seconds_since_1900 == 100 < NTP_DELTA */
+    feed(under, 48);
+    assert(g_applied_called == 0);
+    assert(ntp_state == NTP_STATE_FAILED);
+
+    /* Forward cap: a step more than NTP_MAX_FORWARD_STEP_S beyond the monotonic
+     * projection is rejected even though it clears the absolute sane band. */
+    reset_ntp_state();
+    synced                 = true;
+    last_sync_unix         = 1700000000u;
+    last_sync_monotonic_us = 0;
+    g_time_us              = 0; /* elapsed_s == 0, projected == 1700000000 */
+    make_ntp_packet(pkt, 1700000000u + NTP_MAX_FORWARD_STEP_S + 100u);
+    feed(pkt, 48);
+    assert(g_applied_called == 0);
+    assert(ntp_state == NTP_STATE_FAILED);
+
+    /* Backward budget: a small rollback within epsilon is accepted and charged;
+     * an equivalent one once the per-boot budget is spent is rejected. */
+    reset_ntp_state();
+    synced                 = true;
+    last_sync_unix         = 1700000000u;
+    last_sync_monotonic_us = 0;
+    g_time_us              = 0;
+    make_ntp_packet(pkt, 1699999997u); /* 3 s below projection, budget free */
+    feed(pkt, 48);
+    assert(g_applied_called == 1);
+    assert(rollback_budget_used_s == 3u);
+
+    reset_ntp_state();
+    synced                 = true;
+    last_sync_unix         = 1700000000u;
+    last_sync_monotonic_us = 0;
+    g_time_us              = 0;
+    rollback_budget_used_s = NTP_ROLLBACK_BUDGET_S; /* fully spent */
+    make_ntp_packet(pkt, 1699999997u);              /* still needs 3 s of budget */
+    feed(pkt, 48);
+    assert(g_applied_called == 0);
+    assert(ntp_state == NTP_STATE_FAILED);
 
     /* (3) Cheap host-safe coverage of the non-parse API that needs no live
      * lwip: the trivial getters, ntp_init (rtc_init stub), and ntp_task's

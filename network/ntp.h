@@ -4,10 +4,27 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define NTP_RESYNC_INTERVAL_S  (30 * 60) // 30 minutes
-#define NTP_RETRY_INTERVAL_S   5         // retry on boot failure
-#define NTP_TIMEOUT_S          15        // per-sync timeout
-#define NTP_ROLLBACK_EPSILON_S 60        // max allowed backward correction
+#define NTP_RESYNC_INTERVAL_S (30 * 60) // 30 minutes
+#define NTP_RETRY_INTERVAL_S  5         // retry on boot failure
+#define NTP_TIMEOUT_S         15        // per-sync timeout
+
+// Max backward correction tolerated on a single accepted sync, kept well under
+// one TOTP step (30 s) so a rollback within it can never move the current OTP
+// window. Covers only crystal drift + network jitter between syncs.
+#define NTP_ROLLBACK_EPSILON_S 5
+
+// Cumulative backward slack the clock may absorb across ALL syncs in one boot.
+// Each accepted response that lands below the monotonic projection charges the
+// difference against this budget; once exhausted, further backward corrections
+// are rejected. Stops a deauth/replay loop from walking the clock back
+// NTP_ROLLBACK_EPSILON_S per sync without bound.
+#define NTP_ROLLBACK_BUDGET_S 300
+
+// Max forward step tolerated on a single accepted sync once synced. The
+// absolute sane band below already rejects a wild year-2100 jump; this is the
+// tighter per-sync cap that keeps an on-path packet from yanking the clock a
+// smaller-but-still-bogus distance ahead of the monotonic projection.
+#define NTP_MAX_FORWARD_STEP_S 86400 // 1 day
 
 // Sanity band for any timestamp accepted from the network: it must fall between
 // the firmware's own build time and this many years after it. Applied
