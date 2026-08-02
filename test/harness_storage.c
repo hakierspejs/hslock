@@ -197,6 +197,24 @@ int main(void) {
     assert(strcmp(wgot.ssid, wcfg.ssid) == 0);
     assert(strcmp(wgot.password, wcfg.password) == 0);
 
+    /* L8: storage_wifi_get must NUL-terminate both fields on read, even when the
+     * flash bytes carry no terminator. Plant a config whose ssid/password fill
+     * the whole field with non-NUL bytes (storage_wifi_set is a raw writer that
+     * does NOT zero-pad, unlike cmd_set_wifi), then get: the last byte of each
+     * field must be forced to '\0' so downstream printf("%s")/connect can't
+     * over-read the password into the SSID. */
+    wifi_config_t wfull;
+    memset(wfull.ssid, 'S', sizeof wfull.ssid);
+    memset(wfull.password, 'P', sizeof wfull.password);
+    assert(storage_wifi_set(&wfull) == true);
+    wifi_config_t wterm;
+    memset(&wterm, 'X', sizeof wterm); /* poison so we see the terminator set */
+    assert(storage_wifi_get(&wterm) == true);
+    assert(wterm.ssid[WIFI_SSID_MAX - 1] == '\0');
+    assert(wterm.password[WIFI_PASSWORD_MAX - 1] == '\0');
+    assert(strlen(wterm.ssid) == WIFI_SSID_MAX - 1);         /* no over-read */
+    assert(strlen(wterm.password) == WIFI_PASSWORD_MAX - 1); /* no over-read */
+
     assert(storage_wifi_clear() == true);
     assert(storage_wifi_get(&wgot) == false); /* gone */
     assert(storage_wifi_clear() == false);    /* already gone */
