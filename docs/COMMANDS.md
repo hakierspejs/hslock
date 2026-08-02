@@ -36,7 +36,7 @@ Commands marked **admin** require `login` first.
 | Command | Access | Description |
 | --------- | -------- | ------------- |
 | `list-keys` | admin | List all keys: id, status, name, enabled, admin, created |
-| `get-key <id>` | admin | Show key details including raw secret bytes |
+| `get-key <id>` | admin | Show key details (no secret); use `get-key-secret` to read the seed |
 | `get-key-secret <id>` | admin | Show base32 secret, otpauth:// URI and ASCII QR code for enrollment |
 | `add-key <id> <name>` | admin | Generate random secret and save new key. Error if id exists. |
 | `rename-key <id> <name>` | admin | Update key label without touching the secret |
