@@ -65,11 +65,13 @@ void cmd_status(int argc, char **argv) {
         printf("ntp:       not synced\r\n");
     }
 
-    // Keys (admin only: key inventory is target-selection data)
+    // Keys (admin only: key inventory is target-selection data). Declared at
+    // function scope so the scrub below always runs, even on the non-admin path
+    // where the array stays zero-initialised.
+    static key_record_t keys[BACKUP_MAX_KEYS];
     if (commands_is_admin()) {
-        static key_record_t keys[BACKUP_MAX_KEYS];
-        int                 count   = storage_key_list(keys, BACKUP_MAX_KEYS);
-        int                 enabled = 0, corrupt = 0;
+        int count   = storage_key_list(keys, BACKUP_MAX_KEYS);
+        int enabled = 0, corrupt = 0;
         for (int i = 0; i < count; i++) {
             if (!keys[i].is_checksum_valid)
                 corrupt++;
