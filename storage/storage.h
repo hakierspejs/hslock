@@ -56,6 +56,13 @@ bool storage_wifi_get(wifi_config_t *out);
 bool storage_wifi_set(const wifi_config_t *cfg);
 bool storage_wifi_clear(void);
 
+// Persisted anti-rollback time floor: the coarse "maximum unix time ever
+// observed" watermark. The NTP layer enforces it as an absolute floor that
+// survives power cycles (the RP2040 RTC is not battery-backed), so a spoofed
+// first-sync response cannot rewind the clock past a previously-seen time.
+bool storage_time_floor_get(uint32_t *out);  // false if never set / not mounted
+bool storage_time_floor_set(uint32_t floor); // persist watermark; false on error
+
 // Key CRUD
 bool storage_key_exists(uint16_t id);
 bool storage_key_get(uint16_t id, key_record_t *out);

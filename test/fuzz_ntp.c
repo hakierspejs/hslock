@@ -144,6 +144,24 @@ bool wifi_is_connected(void) {
     return true;
 }
 
+/* storage: the persisted anti-rollback floor (C3). Backed by a single host var
+ * so the harness can preset it (as if loaded from littlefs at boot) and inspect
+ * what apply_time() writes. */
+static uint32_t g_stored_floor;
+static int      g_stored_floor_valid;
+
+bool storage_time_floor_get(uint32_t *out) {
+    if (!g_stored_floor_valid)
+        return false;
+    *out = g_stored_floor;
+    return true;
+}
+bool storage_time_floor_set(uint32_t floor) {
+    g_stored_floor       = floor;
+    g_stored_floor_valid = 1;
+    return true;
+}
+
 /* --- the target, static functions and file-static state now in scope ------ */
 #include "../network/ntp.c"
 
@@ -156,8 +174,11 @@ static void reset_ntp_state(void) {
     last_sync_monotonic_us = 0;
     rollback_budget_used_s = 0;
     ntp_state              = NTP_STATE_IDLE;
+    persisted_floor        = 0;
     g_applied_called       = 0;
     g_applied_unix         = 0;
+    g_stored_floor         = 0;
+    g_stored_floor_valid   = 0;
 }
 
 /* Drive ntp_recv_cb with a datagram: p->len == len selects the parse/too-short
@@ -189,7 +210,7 @@ static void feed(const uint8_t *bytes, size_t len) {
 static void make_ntp_packet(uint8_t pkt[48], uint32_t unix_time) {
     memset(pkt, 0, 48);
     pkt[0]                      = 0x1C; /* LI=0, VN=3, Mode=4 (server) */
-    pkt[1]                      = 1;    /* stratum 1 (valid: 1..15) */
+    pkt[1]                      = 1;    /* stratum 1 (0 is kiss-o-death, rejected) */
     uint32_t seconds_since_1900 = unix_time + NTP_DELTA;
     pkt[40]                     = (uint8_t)(seconds_since_1900 >> 24);
     pkt[41]                     = (uint8_t)(seconds_since_1900 >> 16);
@@ -294,6 +315,30 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     feed(pkt, 48);
     assert(g_applied_called == 0);
     assert(ntp_state == NTP_STATE_FAILED);
+
+    /* (2c) C3: the PERSISTED floor is enforced on the FIRST sync after boot
+     * (synced == false). A spoofed response below the watermark is rejected and
+     * never reaches the RTC; one at/above it is accepted, and apply_time
+     * advances the persisted watermark to the accepted time's coarse bucket. */
+    reset_ntp_state();
+    persisted_floor = 1700000000u; /* as if loaded from littlefs at boot */
+    g_time_us       = 0;
+
+    make_ntp_packet(pkt, persisted_floor - 100u); /* rewind attempt */
+    feed(pkt, 48);
+    assert(g_applied_called == 0); /* first-sync rewind rejected */
+    assert(ntp_state == NTP_STATE_FAILED);
+
+    uint32_t forward = persisted_floor + TIME_FLOOR_GRANULARITY_S + 100u;
+    make_ntp_packet(pkt, forward);
+    feed(pkt, 48);
+    assert(g_applied_called == 1); /* first-sync forward accepted */
+    assert(g_applied_unix == forward);
+    assert(ntp_state == NTP_STATE_SUCCESS);
+    /* watermark advanced to the accepted time's coarse (hourly) bucket */
+    assert(g_stored_floor_valid);
+    assert(g_stored_floor == forward - (forward % TIME_FLOOR_GRANULARITY_S));
+    assert(persisted_floor == g_stored_floor);
 
     /* (3) Cheap host-safe coverage of the non-parse API that needs no live
      * lwip: the trivial getters, ntp_init (rtc_init stub), and ntp_task's

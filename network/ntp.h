@@ -26,6 +26,14 @@
 // smaller-but-still-bogus distance ahead of the monotonic projection.
 #define NTP_MAX_FORWARD_STEP_S 86400 // 1 day
 
+// Granularity of the persisted anti-rollback watermark. The accepted time is
+// rounded DOWN to this bucket before being written to littlefs, so at most one
+// flash write per bucket bounds wear: an hourly floor costs <=24 writes/day
+// while still defeating a captured-code replay (the attacker cannot rewind the
+// clock past the last whole hour ever observed, even on the first sync after a
+// power cycle).
+#define TIME_FLOOR_GRANULARITY_S 3600 // 1 hour
+
 // Sanity band for any timestamp accepted from the network: it must fall between
 // the firmware's own build time and this many years after it. Applied
 // unconditionally - including before the first sync, where rollback_check()
