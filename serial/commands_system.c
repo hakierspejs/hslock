@@ -1,3 +1,4 @@
+#include "commands.h"
 #include "commands_handlers.h"
 #include "commands.h"
 #include "hardware/buzzer.h"
@@ -64,11 +65,13 @@ void cmd_status(int argc, char **argv) {
         printf("ntp:       not synced\r\n");
     }
 
-    // Keys (admin only: key inventory is target-selection data)
+    // Keys (admin only: key inventory is target-selection data). Declared at
+    // function scope so the scrub below always runs, even on the non-admin path
+    // where the array stays zero-initialised.
+    static key_record_t keys[BACKUP_MAX_KEYS];
     if (commands_is_admin()) {
-        static key_record_t keys[BACKUP_MAX_KEYS];
-        int                 count   = storage_key_list(keys, BACKUP_MAX_KEYS);
-        int                 enabled = 0, corrupt = 0;
+        int count   = storage_key_list(keys, BACKUP_MAX_KEYS);
+        int enabled = 0, corrupt = 0;
         for (int i = 0; i < count; i++) {
             if (!keys[i].is_checksum_valid)
                 corrupt++;
@@ -154,7 +157,7 @@ void cmd_login(int argc, char **argv) {
     wifi_config_t wifi;
     if (storage_is_mounted() && !storage_wifi_get(&wifi)) {
         printf("warning: wifi not configured - open mode\r\n");
-        admin_mode = true;
+        commands_admin_grant();
         printf("login: admin mode enabled\r\n");
         buzzer_play_command_ack();
         return;
@@ -168,7 +171,7 @@ void cmd_login(int argc, char **argv) {
     if (!clock_get_unix_time(&now_unix)) {
         if (time_us_64() >= BOOT_BYPASS_WINDOW_US) {
             printf("warning: RTC not set - open mode\r\n");
-            admin_mode = true;
+            commands_admin_grant();
             printf("login: admin mode enabled\r\n");
             buzzer_play_command_ack();
         } else {
@@ -183,7 +186,7 @@ void cmd_login(int argc, char **argv) {
     // No admin keys - allow any credentials (bootstrap mode)
     if (!any_admin) {
         printf("warning: no admin keys configured - bootstrap mode\r\n");
-        admin_mode = true;
+        commands_admin_grant();
         printf("login: admin mode enabled\r\n");
         buzzer_play_command_ack();
         return;
@@ -213,7 +216,7 @@ void cmd_login(int argc, char **argv) {
         return;
     }
 
-    admin_mode = true;
+    commands_admin_grant();
     printf("login: admin mode enabled\r\n");
     secure_wipe(&key, sizeof(key));
     buzzer_play_command_ack();
