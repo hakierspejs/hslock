@@ -76,10 +76,9 @@ void cmd_status(int argc, char **argv) {
                 enabled++;
         }
         printf("keys:      %d total, %d enabled, %d corrupt\r\n", count, enabled, corrupt);
+        // Scrub the resident key database (seeds included) from BSS.
+        secure_wipe(keys, sizeof(keys));
     }
-
-    // Scrub the resident key database (seeds included) from BSS.
-    secure_wipe(keys, sizeof(keys));
 
     buzzer_play_command_ack();
 }
