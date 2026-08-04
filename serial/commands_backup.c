@@ -66,10 +66,10 @@ void cmd_import_keys(int argc, char **argv) {
         return;
     }
 
-    // Backup first
-    printf("backing up current keys...\r\n");
-    cmd_export_keys(0, NULL);
-
+    // M15: the safety-backup is emitted ONCE, later — only after the pasted blob
+    // has been received and base64-decoded (see "backing up current keys" below).
+    // The old unconditional backup here ran even when the import turned out to be
+    // empty/garbage, so it was removed.
     printf("paste import data, then send empty line:\r\n");
 
     // Read base64 directly from serial into a large static buffer
