@@ -29,8 +29,14 @@
 #define INPUT_MAX_LEN 9
 #define TOTP_CODE_LEN 6
 
-static char input_buf[INPUT_MAX_LEN + 1];
-static int  input_len = 0;
+// Clear an abandoned (non-empty, untouched) buffer after this long so a later
+// visitor's keystrokes cannot concatenate onto a previous person's partial
+// entry (each retained digit removes a factor of 10 from the search space).
+#define INPUT_IDLE_TIMEOUT_US (10ull * 1000 * 1000) // ~10 s
+
+static char     input_buf[INPUT_MAX_LEN + 1];
+static int      input_len     = 0;
+static uint64_t last_input_us = 0; // timestamp of the last accepted keystroke
 
 static void input_clear(void) {
     memset(input_buf, 0, sizeof(input_buf));
@@ -112,6 +118,12 @@ void main1(void) {
     keypad_init();
 
     while (true) {
+        // Drop an abandoned partial entry after the idle window so the next
+        // person cannot complete or extend a previous visitor's buffer.
+        if (input_len > 0 && time_us_64() - last_input_us > INPUT_IDLE_TIMEOUT_US) {
+            input_clear();
+        }
+
         char key = keypad_get_key();
 
         if (key) {
@@ -141,9 +153,15 @@ void main1(void) {
             case '9':
                 if (input_len < INPUT_MAX_LEN) {
                     input_buf[input_len++] = key;
+                    last_input_us          = time_us_64();
                     buzzer_beep_short();
+                } else {
+                    // Buffer full: emit a DISTINCT tone rather than dropping the
+                    // key silently, so "no beep" cannot be used as an oracle to
+                    // learn that the buffer has reached its maximum length.
+                    last_input_us = time_us_64();
+                    buzzer_beep_medium();
                 }
-                // silently ignore if buffer full
                 break;
 
             // B, C, D reserved for future use
