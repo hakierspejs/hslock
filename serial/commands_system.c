@@ -64,11 +64,13 @@ void cmd_status(int argc, char **argv) {
         printf("ntp:       not synced\r\n");
     }
 
-    // Keys (admin only: key inventory is target-selection data)
+    // Keys (admin only: key inventory is target-selection data). Declared at
+    // function scope so the scrub below always runs, even on the non-admin path
+    // where the array stays zero-initialised.
+    static key_record_t keys[BACKUP_MAX_KEYS];
     if (commands_is_admin()) {
-        static key_record_t keys[BACKUP_MAX_KEYS];
-        int                 count   = storage_key_list(keys, BACKUP_MAX_KEYS);
-        int                 enabled = 0, corrupt = 0;
+        int count   = storage_key_list(keys, BACKUP_MAX_KEYS);
+        int enabled = 0, corrupt = 0;
         for (int i = 0; i < count; i++) {
             if (!keys[i].is_checksum_valid)
                 corrupt++;
@@ -189,9 +191,20 @@ void cmd_login(int argc, char **argv) {
         return;
     }
 
+    // Fixed dummy secret used to equalise the HMAC-SHA1 work done on every
+    // credential-check failure arm (L2). Without this a non-existent id or a
+    // disabled/non-admin/corrupt key returns after a mere littlefs lookup,
+    // while a valid-but-wrong-TOTP attempt costs up to TOTP_WINDOW*2+1 HMAC
+    // computations - a timing delta that lets an attacker distinguish a valid
+    // id from an invalid one. Run totp_verify against this dummy on the early
+    // arms so all failure paths do equivalent crypto before the identical
+    // message + buzzer delay.
+    static const uint8_t dummy_secret[KEY_SECRET_LEN] = {0};
+
     // Load requested key
     key_record_t key;
     if (!storage_key_get(id, &key)) {
+        (void)totp_verify(dummy_secret, KEY_SECRET_LEN, code);
         printf("error: invalid credentials\r\n");
         secure_wipe(&key, sizeof(key));
         buzzer_play_auth_error();
@@ -199,6 +212,7 @@ void cmd_login(int argc, char **argv) {
     }
 
     if (!key.is_enabled || !key.is_admin || !key.is_checksum_valid) {
+        (void)totp_verify(dummy_secret, KEY_SECRET_LEN, code);
         printf("error: invalid credentials\r\n");
         secure_wipe(&key, sizeof(key));
         buzzer_play_auth_error();
