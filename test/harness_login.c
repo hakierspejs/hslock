@@ -126,6 +126,9 @@ void buzzer_play_command_ack(void) {
 
 // ---- Link-only stubs (referenced by other handlers in commands_system.c) ----
 
+bool commands_is_admin(void) {
+    return admin_mode;
+}
 bool storage_key_save(const key_record_t *k) {
     (void)k;
     return true;
