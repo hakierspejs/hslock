@@ -7,6 +7,7 @@
 #include "pico/cyw43_arch.h"
 #include "pico/rand.h"
 #include "pico/time.h"
+#include "hardware/sync.h"
 #include "lwip/udp.h"
 #include "lwip/dns.h"
 
@@ -39,9 +40,35 @@ static uint8_t         ntp_nonce[8]; // stored transmit timestamp for origin che
 static struct udp_pcb *ntp_pcb = NULL;
 static ip_addr_t       server_addr;
 
-static bool     synced                 = false;
-static uint32_t last_sync_unix         = 0;
-static uint64_t last_sync_monotonic_us = 0;
+static volatile bool     synced                 = false;
+static volatile uint32_t last_sync_unix         = 0;
+static volatile uint64_t last_sync_monotonic_us = 0;
+
+// ---------------------------------------------------------------------------
+// 64-bit torn-read guard (M10b)
+//
+// last_sync_monotonic_us is 64-bit; on the RP2040 a 64-bit load/store is not
+// atomic and `volatile` does not make it so. Guard every read and write of the
+// (synced, last_sync_unix, last_sync_monotonic_us) triple with a brief critical
+// section so a reader never observes a half-updated pair. Cheap: these run only
+// on the NTP sync path and the once-per-loop resync check.
+// ---------------------------------------------------------------------------
+
+static void store_sync(uint32_t unix_time) {
+    uint32_t irq           = save_and_disable_interrupts();
+    last_sync_unix         = unix_time;
+    last_sync_monotonic_us = time_us_64();
+    synced                 = true;
+    restore_interrupts(irq);
+}
+
+static void load_sync(bool *synced_out, uint32_t *unix_out, uint64_t *mono_out) {
+    uint32_t irq = save_and_disable_interrupts();
+    *synced_out  = synced;
+    *unix_out    = last_sync_unix;
+    *mono_out    = last_sync_monotonic_us;
+    restore_interrupts(irq);
+}
 
 // Cumulative backward slack consumed since boot (see NTP_ROLLBACK_BUDGET_S).
 static uint32_t rollback_budget_used_s = 0;
@@ -51,16 +78,22 @@ static uint32_t rollback_budget_used_s = 0;
 // ---------------------------------------------------------------------------
 
 static bool rollback_check(uint32_t new_time) {
-    if (!synced)
+    bool     is_synced;
+    uint32_t sync_unix;
+    uint64_t sync_mono;
+    load_sync(&is_synced, &sync_unix, &sync_mono);
+
+    if (!is_synced)
         return true; // no floor before first sync
 
-    uint64_t elapsed_us = time_us_64() - last_sync_monotonic_us;
+    uint64_t elapsed_us = time_us_64() - sync_mono;
     uint32_t elapsed_s  = (uint32_t)(elapsed_us / 1000000ULL);
 
     // Where the monotonic clock says we should be now, in saturating arithmetic
     // so a huge elapsed_s can't wrap the projection around to a small value.
-    uint32_t projected =
-        (last_sync_unix > UINT32_MAX - elapsed_s) ? UINT32_MAX : last_sync_unix + elapsed_s;
+    // Uses the snapshot (sync_unix) taken with sync_mono above so the pair stays
+    // consistent even if a concurrent sync updates the globals mid-check (M10b).
+    uint32_t projected = (sync_unix > UINT32_MAX - elapsed_s) ? UINT32_MAX : sync_unix + elapsed_s;
 
     // Lower bound: at most NTP_ROLLBACK_EPSILON_S below the projection, computed
     // saturating so it never underflows to ~4.29e9 and freezes a bogus floor.
@@ -96,38 +129,80 @@ static bool rollback_check(uint32_t new_time) {
 }
 
 // ---------------------------------------------------------------------------
-// Set RTC from unix timestamp
+// Set RTC from unix timestamp (thread context only — see ntp_process_pending)
 // ---------------------------------------------------------------------------
 
 static void apply_time(uint32_t unix_time) {
     clock_set_from_unix_time(unix_time);
-
-    last_sync_unix         = unix_time;
-    last_sync_monotonic_us = time_us_64();
-    synced                 = true;
-
+    store_sync(unix_time);
     printf("[ntp] synced: unix=%u\r\n", unix_time);
 }
 
 // ---------------------------------------------------------------------------
-// NTP response callback
+// NTP response callback + deferred processing (M10b)
+//
+// ntp_recv_cb is invoked by lwIP from a low-priority IRQ. Doing the RTC write
+// (clock_set_from_unix_time) there races core 0's rtc_get in totp_verify (torn
+// read an attacker can time), and printf there can deadlock against the stdio
+// lock core 0 may hold. So the callback does the absolute minimum: copy the
+// datagram + source into a single slot and raise a flag. All validation, the
+// RTC write and every printf run in ntp_process_pending() from the ntp_sync()
+// poll loop — i.e. thread context on core 0, the same context as rtc_get.
 // ---------------------------------------------------------------------------
+
+static volatile bool ntp_pkt_pending = false;
+static uint8_t       ntp_pkt_buf[48];
+static uint16_t      ntp_pkt_len = 0;
+static ip_addr_t     ntp_pkt_addr;
+static uint16_t      ntp_pkt_port = 0;
 
 static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr,
                         u16_t port) {
-    if (p->tot_len < 48) { // use tot_len not len (L10 fix too)
+    (void)arg;
+    (void)pcb;
+
+    // IRQ/lwIP context: copy the (bounded) datagram + source, raise the flag,
+    // and free the pbuf. No RTC write, no printf, no shared-state validation.
+    uint16_t n = p->tot_len < 48 ? p->tot_len : 48;
+    pbuf_copy_partial(p, ntp_pkt_buf, n, 0);
+    ntp_pkt_len     = p->tot_len;
+    ntp_pkt_addr    = *addr;
+    ntp_pkt_port    = port;
+    ntp_pkt_pending = true;
+
+    pbuf_free(p);
+}
+
+// Thread-context processor. Run from the ntp_sync() poll loop. When a datagram
+// is pending it snapshots the slot under a brief critical section (the slot is
+// written from IRQ), runs the full validation, and on success does the RTC
+// write via apply_time(). Sets ntp_state to SUCCESS/FAILED to release the poll
+// loop. No-op when nothing is pending.
+static void ntp_process_pending(void) {
+    if (!ntp_pkt_pending)
+        return;
+
+    uint8_t   buf[48];
+    uint16_t  len;
+    ip_addr_t addr;
+    uint16_t  port;
+
+    uint32_t irq = save_and_disable_interrupts();
+    memcpy(buf, ntp_pkt_buf, sizeof(buf));
+    len             = ntp_pkt_len;
+    addr            = ntp_pkt_addr;
+    port            = ntp_pkt_port;
+    ntp_pkt_pending = false;
+    restore_interrupts(irq);
+
+    if (len < 48) { // use tot_len not len (L10 fix too)
         printf("[ntp] response too short\r\n");
-        pbuf_free(p);
         ntp_state = NTP_STATE_FAILED;
         return;
     }
 
-    uint8_t buf[48];
-    pbuf_copy_partial(p, buf, 48, 0);
-    pbuf_free(p);
-
     // Validate source (belt-and-suspenders — udp_connect already filters)
-    if (!ip_addr_cmp(addr, &server_addr) || port != NTP_PORT) {
+    if (!ip_addr_cmp(&addr, &server_addr) || port != NTP_PORT) {
         printf("[ntp] unexpected source\r\n");
         ntp_state = NTP_STATE_FAILED;
         return;
@@ -251,7 +326,8 @@ bool ntp_sync(void) {
     }
 
     udp_recv(ntp_pcb, ntp_recv_cb, NULL);
-    ntp_state = NTP_STATE_RESOLVING;
+    ntp_pkt_pending = false; // discard any stale datagram from a previous sync
+    ntp_state       = NTP_STATE_RESOLVING;
 
     cyw43_arch_lwip_begin();
     err_t err = dns_gethostbyname(NTP_SERVER, &server_addr, dns_found_cb, NULL);
@@ -271,6 +347,7 @@ bool ntp_sync(void) {
     absolute_time_t deadline = make_timeout_time_ms(NTP_TIMEOUT_S * 1000);
     while (ntp_state != NTP_STATE_SUCCESS && ntp_state != NTP_STATE_FAILED) {
         cyw43_arch_poll();
+        ntp_process_pending(); // thread-context validation/RTC-write/printf (M10b)
         sleep_ms(10);
         if (time_reached(deadline)) {
             printf("[ntp] timed out\r\n");
@@ -290,12 +367,17 @@ bool ntp_sync(void) {
 }
 
 void ntp_task(void) {
-    if (!synced)
+    bool     is_synced;
+    uint32_t sync_unix;
+    uint64_t sync_mono;
+    load_sync(&is_synced, &sync_unix, &sync_mono);
+
+    if (!is_synced)
         return;
     if (!wifi_is_connected())
         return;
 
-    uint64_t elapsed_us = time_us_64() - last_sync_monotonic_us;
+    uint64_t elapsed_us = time_us_64() - sync_mono;
     uint32_t elapsed_s  = (uint32_t)(elapsed_us / 1000000ULL);
 
     if (elapsed_s < NTP_RESYNC_INTERVAL_S)
