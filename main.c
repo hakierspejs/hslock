@@ -26,6 +26,10 @@
 
 door_verify_mailbox_t door_verify_mailbox;
 
+// Max boot-time NTP sync attempts before booting into a degraded, time-not-set
+// state instead of blocking forever (ISSUES.md H4).
+#define BOOT_NTP_MAX_ATTEMPTS 3
+
 static void boot_network(void) {
     wifi_config_t cfg;
     if (!storage_wifi_get(&cfg)) {
@@ -41,15 +45,29 @@ static void boot_network(void) {
         return;
     }
 
-    // Block until first NTP sync succeeds - beep + retry on failure
+    // Bound the boot-time NTP sync. A blackholed UDP/123 or a poisoned DNS must
+    // not wedge boot forever: that would leave the door dead AND the serial
+    // console unreachable, with no path to recovery (ISSUES.md H4). After a few
+    // attempts, boot anyway into a degraded "time-not-set" state - the console
+    // comes up and ntp_task() keeps retrying the first sync in the service loop.
+    // The door stays closed while the clock is unset: totp_verify() fails closed
+    // when clock_get_unix_time() reports the RTC was never set (consistent with
+    // M1's intent).
     printf("[main] waiting for NTP sync...\r\n");
-    while (!ntp_sync()) {
-        printf("[main] NTP sync failed, retrying in %ds...\r\n", NTP_RETRY_INTERVAL_S);
+    for (int attempt = 1; attempt <= BOOT_NTP_MAX_ATTEMPTS; attempt++) {
+        if (ntp_sync()) {
+            printf("[main] NTP sync ok\r\n");
+            return;
+        }
+        printf("[main] NTP sync failed (%d/%d), retrying in %ds...\r\n", attempt,
+               BOOT_NTP_MAX_ATTEMPTS, NTP_RETRY_INTERVAL_S);
         buzzer_beep_short();
-        sleep_ms(NTP_RETRY_INTERVAL_S * 1000);
+        if (attempt < BOOT_NTP_MAX_ATTEMPTS)
+            sleep_ms(NTP_RETRY_INTERVAL_S * 1000);
     }
 
-    printf("[main] NTP sync ok\r\n");
+    printf("[main] NTP unavailable - booting in degraded (time-not-set) mode\r\n");
+    printf("[main] door disabled until time is set; console available, NTP retrying\r\n");
 }
 
 static void core0_handle_door_verify(void) {
@@ -96,8 +114,6 @@ int main(void) {
 
     buzzer_beep_short();
 
-    watchdog_enable(8000, true); // 8 second timeout, pause on debug
-
     // Core 1 must be running and ready before any flash writes
     multicore_launch_core1(main1);
     multicore_fifo_pop_blocking(); // wait for core 1 ready signal
@@ -127,7 +143,16 @@ int main(void) {
 
     console_init();
 
+    // Enable the watchdog only now that boot is complete. The boot path has
+    // legitimately long single-core blocking (recovery beeps, WiFi association,
+    // the bounded NTP sync) that no single core can pet within the RP2040's
+    // ~8s watchdog ceiling, and boot is already bounded on every path above.
+    // From here the service loop feeds the watchdog, gated on core 1's
+    // heartbeat, so a wedge on EITHER core triggers a reset (ISSUES.md H4).
+    watchdog_enable(8000, true); // 8 second timeout, pause on debug
+
     while (true) {
+        watchdog_feed_core0(); // pets iff core 1's heartbeat advanced
         core0_handle_door_verify();
         console_task();
         wifi_task();
