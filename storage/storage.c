@@ -5,8 +5,13 @@
 #include "lfs_util.h"
 #include "pico/stdlib.h"
 #include "pico/flash.h"
+#include "pico/rand.h"
+#include "pico/unique_id.h"
 #include "hardware/flash.h"
 #include "hardware/sync.h"
+
+#include "mbedtls/gcm.h"
+#include "mbedtls/md.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -61,18 +66,13 @@ static uint32_t key_checksum(const key_record_stored_t *key) {
     return crc;
 }
 
-// Fill via an out-pointer rather than returning by value so the secret never
-// lives in a transient helper-frame copy that would outlast this call.
-static void to_stored(const key_record_t *k, key_record_stored_t *s) {
-    s->id         = k->id;
-    s->is_enabled = k->is_enabled;
-    s->is_admin   = k->is_admin;
-    s->created_at = k->created_at;
-    memcpy(s->name, k->name, sizeof(s->name));
-    memcpy(s->secret, k->secret, sizeof(s->secret));
-    s->checksum = key_checksum(s);
-}
-
+// Legacy plaintext record -> logic model. Retained ONLY for reading records
+// written by firmware that predates at-rest encryption (H7); new records are
+// always written encrypted (key_record_enc_t below) and read via enc_to_key,
+// and a legacy record is migrated to the encrypted format the next time the
+// key is saved. Fill via an out-pointer rather than returning by value so the
+// secret never lives in a transient helper-frame copy that would outlast this
+// call.
 static void to_record(const key_record_stored_t *s, key_record_t *k) {
     k->id                = s->id;
     k->is_enabled        = s->is_enabled;
@@ -83,6 +83,193 @@ static void to_record(const key_record_stored_t *s, key_record_t *k) {
     k->name[KEY_NAME_MAX - 1] = '\0';
     memcpy(k->secret, s->secret, sizeof(k->secret));
 }
+
+// ---------------------------------------------------------------------------
+// At-rest encryption (H7)
+// ---------------------------------------------------------------------------
+// Secrets (TOTP seeds and the WiFi password) are encrypted at rest under a
+// device-bound key-encryption key (KEK): HMAC-SHA256(compile-time secret,
+// per-board unique id). AES-256-GCM provides confidentiality plus integrity —
+// the 16-byte tag authenticates both the ciphertext and the cleartext metadata
+// header (passed as AAD), so it replaces the old CRC for encrypted records.
+//
+// The RP2040 has no secure boot / flash encryption / readback protection, so
+// this only raises the bar from "read the flash" to "read the flash AND the
+// firmware" (the compile-time secret lives in the image). It is defence in
+// depth, not a root of trust; RP2350 (OTP + secure boot) is the real fix. The
+// board id is not secret, so the compile-time secret SHOULD be overridden per
+// build via -DHSLOCK_STORAGE_KEK_SECRET=... rather than shipping this default.
+#ifndef HSLOCK_STORAGE_KEK_SECRET
+#define HSLOCK_STORAGE_KEK_SECRET "hslock-storage-kek-v1-override-at-build-time"
+#endif
+
+#define KEK_LEN     32 // AES-256
+#define REC_IV_LEN  12 // GCM nonce
+#define REC_TAG_LEN 16 // GCM tag
+
+// Derive the 32-byte device-bound KEK. Deterministic per board, so an encrypted
+// record round-trips on the same device across reboots.
+static void derive_kek(uint8_t kek_out[KEK_LEN]) {
+    pico_unique_board_id_t board;
+    pico_get_unique_board_id(&board);
+    const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    mbedtls_md_hmac(info, (const uint8_t *)HSLOCK_STORAGE_KEK_SECRET,
+                    strlen(HSLOCK_STORAGE_KEK_SECRET), board.id, sizeof(board.id), kek_out);
+}
+
+// AES-256-GCM seal: random per-record IV, AAD authenticated but not encrypted.
+static bool gcm_seal(const uint8_t *aad, size_t aad_len, const uint8_t *pt, size_t pt_len,
+                     uint8_t *iv_out, uint8_t *ct_out, uint8_t *tag_out) {
+    // Fresh random 96-bit IV per write — the KEK is device-fixed, so IV reuse
+    // under one key would be catastrophic for GCM. Draw from the RP2040 RNG.
+    for (size_t i = 0; i < REC_IV_LEN;) {
+        uint64_t r     = get_rand_64();
+        size_t   chunk = (REC_IV_LEN - i) < sizeof(r) ? (REC_IV_LEN - i) : sizeof(r);
+        memcpy(iv_out + i, &r, chunk);
+        i += chunk;
+    }
+
+    uint8_t kek[KEK_LEN];
+    derive_kek(kek);
+    mbedtls_gcm_context ctx;
+    mbedtls_gcm_init(&ctx);
+    int rc = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, kek, KEK_LEN * 8);
+    if (rc == 0)
+        rc = mbedtls_gcm_crypt_and_tag(&ctx, MBEDTLS_GCM_ENCRYPT, pt_len, iv_out, REC_IV_LEN, aad,
+                                       aad_len, pt, ct_out, REC_TAG_LEN, tag_out);
+    mbedtls_gcm_free(&ctx);
+    secure_wipe(kek, sizeof(kek));
+    return rc == 0;
+}
+
+// AES-256-GCM open: verifies the tag over (AAD, ciphertext). Returns false on
+// any authentication failure — corruption, tampering, or a wrong/rotated KEK.
+static bool gcm_open(const uint8_t *aad, size_t aad_len, const uint8_t *iv, const uint8_t *ct,
+                     size_t ct_len, const uint8_t *tag, uint8_t *pt_out) {
+    uint8_t kek[KEK_LEN];
+    derive_kek(kek);
+    mbedtls_gcm_context ctx;
+    mbedtls_gcm_init(&ctx);
+    int rc = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, kek, KEK_LEN * 8);
+    if (rc == 0)
+        rc = mbedtls_gcm_auth_decrypt(&ctx, ct_len, iv, REC_IV_LEN, aad, aad_len, tag, REC_TAG_LEN,
+                                      ct, pt_out);
+    mbedtls_gcm_free(&ctx);
+    secure_wipe(kek, sizeof(kek));
+    return rc == 0;
+}
+
+// ---------------------------------------------------------------------------
+// Encrypted key record (on-flash format v2)
+// ---------------------------------------------------------------------------
+// The cleartext header (magic..created_at) is stored in the clear AND fed to
+// GCM as AAD, so any tampering with it fails the tag. Only `secret` is
+// encrypted. sizeof(key_record_enc_t) differs from sizeof(key_record_stored_t),
+// which is how a read distinguishes the two formats (see storage_key_get).
+
+#define KEY_REC_MAGIC   0x324B5348u // "HSK2"
+#define KEY_REC_VERSION 2
+
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t id;
+    char     name[KEY_NAME_MAX];
+    uint8_t  is_enabled;
+    uint8_t  is_admin;
+    uint32_t created_at;
+    uint8_t  iv[REC_IV_LEN];
+    uint8_t  tag[REC_TAG_LEN];
+    uint8_t  secret_enc[KEY_SECRET_LEN];
+} key_record_enc_t;
+
+// Serialise the authenticated metadata into a packed buffer (struct padding is
+// never fed to GCM, so seal and open agree byte-for-byte).
+static size_t build_key_aad(uint8_t *aad, const key_record_enc_t *e) {
+    size_t   o     = 0;
+    uint32_t magic = e->magic;
+    uint16_t ver   = e->version;
+    uint16_t id    = e->id;
+    uint32_t cat   = e->created_at;
+    memcpy(aad + o, &magic, sizeof(magic));
+    o += sizeof(magic);
+    memcpy(aad + o, &ver, sizeof(ver));
+    o += sizeof(ver);
+    memcpy(aad + o, &id, sizeof(id));
+    o += sizeof(id);
+    memcpy(aad + o, e->name, KEY_NAME_MAX);
+    o += KEY_NAME_MAX;
+    aad[o++] = e->is_enabled;
+    aad[o++] = e->is_admin;
+    memcpy(aad + o, &cat, sizeof(cat));
+    o += sizeof(cat);
+    return o;
+}
+#define KEY_AAD_LEN (4 + 2 + 2 + KEY_NAME_MAX + 1 + 1 + 4)
+
+static bool key_to_enc(const key_record_t *k, key_record_enc_t *e) {
+    memset(e, 0, sizeof(*e));
+    e->magic      = KEY_REC_MAGIC;
+    e->version    = KEY_REC_VERSION;
+    e->id         = k->id;
+    e->is_enabled = k->is_enabled ? 1 : 0;
+    e->is_admin   = k->is_admin ? 1 : 0;
+    e->created_at = k->created_at;
+    memcpy(e->name, k->name, sizeof(e->name));
+
+    uint8_t aad[KEY_AAD_LEN];
+    size_t  aad_len = build_key_aad(aad, e);
+    return gcm_seal(aad, aad_len, k->secret, KEY_SECRET_LEN, e->iv, e->secret_enc, e->tag);
+}
+
+static key_record_t enc_to_key(const key_record_enc_t *e) {
+    key_record_t k;
+    k.id         = e->id;
+    k.is_enabled = (e->is_enabled != 0);
+    k.is_admin   = (e->is_admin != 0);
+    k.created_at = e->created_at;
+    memcpy(k.name, e->name, sizeof(k.name));
+    k.name[KEY_NAME_MAX - 1] = '\0';
+
+    uint8_t aad[KEY_AAD_LEN];
+    size_t  aad_len = build_key_aad(aad, e);
+    k.is_checksum_valid =
+        gcm_open(aad, aad_len, e->iv, e->secret_enc, KEY_SECRET_LEN, e->tag, k.secret);
+    if (!k.is_checksum_valid)
+        memset(k.secret, 0, sizeof(k.secret)); // never surface undecryptable bytes
+    return k;
+}
+
+// ---------------------------------------------------------------------------
+// Encrypted WiFi record (on-flash format v2)
+// ---------------------------------------------------------------------------
+// The whole wifi_config_t (ssid + password) is encrypted. sizeof differs from
+// sizeof(wifi_config_t), the legacy plaintext size, so a read can tell them
+// apart and migrate.
+
+#define WIFI_REC_MAGIC   0x32575348u // "HSW2"
+#define WIFI_REC_VERSION 2
+
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t _reserved;
+    uint8_t  iv[REC_IV_LEN];
+    uint8_t  tag[REC_TAG_LEN];
+    uint8_t  ct[sizeof(wifi_config_t)];
+} wifi_record_enc_t;
+
+static size_t build_wifi_aad(uint8_t *aad, const wifi_record_enc_t *w) {
+    size_t   o     = 0;
+    uint32_t magic = w->magic;
+    uint16_t ver   = w->version;
+    memcpy(aad + o, &magic, sizeof(magic));
+    o += sizeof(magic);
+    memcpy(aad + o, &ver, sizeof(ver));
+    o += sizeof(ver);
+    return o;
+}
+#define WIFI_AAD_LEN (4 + 2)
 
 // ---------------------------------------------------------------------------
 // Flash block device callbacks
@@ -239,21 +426,57 @@ bool storage_wifi_get(wifi_config_t *out) {
     if (lfs_file_opencfg(&lfs, &f, FILE_WIFI, LFS_O_RDONLY, &LFS_FILE_CFG) < 0)
         return false;
 
-    lfs_ssize_t n = lfs_file_read(&lfs, &f, out, sizeof(wifi_config_t));
+    union {
+        wifi_record_enc_t enc;
+        wifi_config_t     legacy;
+        uint8_t           raw[sizeof(wifi_record_enc_t)];
+    } buf;
+    lfs_ssize_t n = lfs_file_read(&lfs, &f, &buf, sizeof(buf));
     lfs_file_close(&lfs, &f);
-    if (n != (lfs_ssize_t)sizeof(wifi_config_t))
-        return false;
 
-    // Defense-in-depth: never trust flash to be NUL-terminated. Both fields
-    // are used directly as C strings (printf("%s"), cyw43 connect), so force a
+    // Defense-in-depth: never trust flash to be NUL-terminated. Both fields are
+    // used directly as C strings (printf("%s"), cyw43 connect), so force a
     // terminator at the last byte to prevent an over-read past the field.
-    out->ssid[WIFI_SSID_MAX - 1]         = '\0';
-    out->password[WIFI_PASSWORD_MAX - 1] = '\0';
-    return true;
+    if (n == (lfs_ssize_t)sizeof(wifi_record_enc_t) && buf.enc.magic == WIFI_REC_MAGIC &&
+        buf.enc.version == WIFI_REC_VERSION) {
+        uint8_t aad[WIFI_AAD_LEN];
+        size_t  aad_len = build_wifi_aad(aad, &buf.enc);
+        bool ok = gcm_open(aad, aad_len, buf.enc.iv, buf.enc.ct, sizeof(wifi_config_t), buf.enc.tag,
+                           (uint8_t *)out);
+        if (!ok) {
+            printf("[storage] wifi decrypt failed (tamper or wrong device)\r\n");
+            secure_wipe(out, sizeof(*out));
+            return false;
+        }
+        out->ssid[WIFI_SSID_MAX - 1]         = '\0';
+        out->password[WIFI_PASSWORD_MAX - 1] = '\0';
+        return true;
+    }
+
+    // Legacy plaintext record: pass it through (migrated to encrypted on the
+    // next storage_wifi_set).
+    if (n == (lfs_ssize_t)sizeof(wifi_config_t)) {
+        memcpy(out, &buf.legacy, sizeof(wifi_config_t));
+        out->ssid[WIFI_SSID_MAX - 1]         = '\0';
+        out->password[WIFI_PASSWORD_MAX - 1] = '\0';
+        return true;
+    }
+
+    return false;
 }
 
 bool storage_wifi_set(const wifi_config_t *cfg) {
     if (!mounted)
+        return false;
+
+    wifi_record_enc_t rec;
+    memset(&rec, 0, sizeof(rec));
+    rec.magic   = WIFI_REC_MAGIC;
+    rec.version = WIFI_REC_VERSION;
+    uint8_t aad[WIFI_AAD_LEN];
+    size_t  aad_len = build_wifi_aad(aad, &rec);
+    if (!gcm_seal(aad, aad_len, (const uint8_t *)cfg, sizeof(wifi_config_t), rec.iv, rec.ct,
+                  rec.tag))
         return false;
 
     lfs_file_t f;
@@ -262,9 +485,9 @@ bool storage_wifi_set(const wifi_config_t *cfg) {
     if (rc < 0)
         return false;
 
-    lfs_ssize_t n = lfs_file_write(&lfs, &f, cfg, sizeof(wifi_config_t));
+    lfs_ssize_t n = lfs_file_write(&lfs, &f, &rec, sizeof(rec));
     lfs_file_close(&lfs, &f);
-    return n == (lfs_ssize_t)sizeof(wifi_config_t);
+    return n == (lfs_ssize_t)sizeof(rec);
 }
 
 bool storage_wifi_clear(void) {
@@ -296,18 +519,28 @@ bool storage_key_get(uint16_t id, key_record_t *out) {
     if (lfs_file_opencfg(&lfs, &f, path, LFS_O_RDONLY, &LFS_FILE_CFG) < 0)
         return false;
 
-    key_record_stored_t stored;
-    lfs_ssize_t         n = lfs_file_read(&lfs, &f, &stored, sizeof(stored));
+    union {
+        key_record_enc_t    enc;
+        key_record_stored_t legacy;
+        uint8_t             raw[sizeof(key_record_enc_t)];
+    } buf;
+    lfs_ssize_t n = lfs_file_read(&lfs, &f, &buf, sizeof(buf));
     lfs_file_close(&lfs, &f);
-    if (n != (lfs_ssize_t)sizeof(stored)) {
-        secure_wipe(&stored, sizeof(stored));
+
+    if (n == (lfs_ssize_t)sizeof(key_record_enc_t) && buf.enc.magic == KEY_REC_MAGIC &&
+        buf.enc.version == KEY_REC_VERSION) {
+        *out = enc_to_key(&buf.enc);
+    } else if (n == (lfs_ssize_t)sizeof(key_record_stored_t)) {
+        // Legacy plaintext record (pre-H7). Read it so the key keeps working;
+        // it is migrated to the encrypted format the next time it is saved.
+        to_record(&buf.legacy, out);
+    } else {
+        secure_wipe(&buf, sizeof(buf));
         return false;
     }
-
-    to_record(&stored, out);
-    // The stored record (secret included) is no longer needed: scrub it so the
-    // seed doesn't linger on the stack after this read.
-    secure_wipe(&stored, sizeof(stored));
+    // The raw record (secret / ciphertext included) is no longer needed: scrub
+    // it so nothing lingers on the stack after this read.
+    secure_wipe(&buf, sizeof(buf));
 
     if (!out->is_checksum_valid)
         printf("[storage] key %u checksum mismatch\r\n", id);
@@ -323,21 +556,22 @@ bool storage_key_save(const key_record_t *key) {
     char path[40];
     key_path(key->id, path, sizeof(path));
 
-    key_record_stored_t stored;
-    to_stored(key, &stored); // checksum computed here
+    key_record_enc_t enc; // AES-256-GCM seal computed here (H7)
+    if (!key_to_enc(key, &enc))
+        return false;
 
     lfs_file_t f;
     int        flags = LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC;
     if (lfs_file_opencfg(&lfs, &f, path, flags, &LFS_FILE_CFG) < 0) {
-        secure_wipe(&stored, sizeof(stored));
+        secure_wipe(&enc, sizeof(enc));
         return false;
     }
 
-    lfs_ssize_t n = lfs_file_write(&lfs, &f, &stored, sizeof(stored));
+    lfs_ssize_t n = lfs_file_write(&lfs, &f, &enc, sizeof(enc));
     lfs_file_close(&lfs, &f);
-    bool ok = n == (lfs_ssize_t)sizeof(stored);
-    // Scrub the serialised record (secret included) from the stack.
-    secure_wipe(&stored, sizeof(stored));
+    bool ok = n == (lfs_ssize_t)sizeof(enc);
+    // Scrub the serialised record from the stack.
+    secure_wipe(&enc, sizeof(enc));
     return ok;
 }
 

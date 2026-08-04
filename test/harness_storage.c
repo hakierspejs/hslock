@@ -28,7 +28,10 @@
 #include "pico/stdlib.h"    /* PICO_FLASH_SIZE_BYTES, PICO_OK */
 
 #include "backup.h"
-#include "lfs_util.h" /* lfs_crc: matches backup.c's whole-backup checksum */
+#include "lfs.h"            /* second lfs mount, used to plant a legacy plaintext record */
+#include "lfs_util.h"       /* lfs_crc: matches backup.c's whole-backup checksum */
+#include "pico/rand.h"      /* get_rand_64: IV source for storage.c's GCM (H7) */
+#include "pico/unique_id.h" /* board id: storage.c's device-bound KEK (H7) */
 #include "storage.h"
 
 /* Must match storage.c's private layout constants. */
@@ -85,6 +88,111 @@ static void flash_ram_map(void) {
     }
     assert((uintptr_t)base == STORAGE_WINDOW_BASE);
     memset(base, 0xFF, STORAGE_SIZE_BYTES); /* fresh, fully-erased flash */
+}
+
+/* --- device doubles storage.c's at-rest crypto (H7) needs ----------------- */
+
+/* GCM IV source. storage.c draws a fresh 96-bit IV per write via get_rand_64;
+ * a monotonic counter gives distinct, reproducible IVs. */
+uint64_t get_rand_64(void) {
+    static uint64_t ctr = 0x0123456789ABCDEFull;
+    ctr += 0x9E3779B97F4A7C15ull;
+    return ctr;
+}
+
+/* Per-board unique id feeding storage.c's KEK. Mutable so a test can simulate a
+ * different device (rotated KEK) and confirm an encrypted record no longer
+ * decrypts. */
+static uint8_t g_board_id[PICO_UNIQUE_BOARD_ID_SIZE_BYTES] = {0xA0, 0xA1, 0xA2, 0xA3,
+                                                              0xA4, 0xA5, 0xA6, 0xA7};
+
+void pico_get_unique_board_id(pico_unique_board_id_t *id_out) {
+    memcpy(id_out->id, g_board_id, PICO_UNIQUE_BOARD_ID_SIZE_BYTES);
+}
+
+/* --- second littlefs mount: plant a legacy plaintext key record ------------ */
+/* storage.c writes encrypted records now, so to exercise the legacy-plaintext
+ * migration/passthrough path we format the same RAM window with an independent
+ * lfs mount and write one pre-H7 record by hand, then let storage.c mount it. */
+
+/* Must match storage.c's PRIVATE key_record_stored_t byte-for-byte. */
+typedef struct {
+    uint16_t id;
+    char     name[KEY_NAME_MAX];
+    uint8_t  secret[KEY_SECRET_LEN];
+    uint8_t  is_enabled;
+    uint8_t  is_admin;
+    uint32_t created_at;
+    uint32_t checksum;
+} legacy_stored_t;
+
+/* Must match storage.c's PRIVATE key_checksum() field-by-field. */
+static uint32_t legacy_checksum(const legacy_stored_t *k) {
+    uint32_t crc = 0xFFFFFFFF;
+    crc          = lfs_crc(crc, &k->id, sizeof(k->id));
+    crc          = lfs_crc(crc, k->name, sizeof(k->name));
+    crc          = lfs_crc(crc, k->secret, sizeof(k->secret));
+    crc          = lfs_crc(crc, &k->is_enabled, sizeof(k->is_enabled));
+    crc          = lfs_crc(crc, &k->is_admin, sizeof(k->is_admin));
+    crc          = lfs_crc(crc, &k->created_at, sizeof(k->created_at));
+    return crc;
+}
+
+/* littlefs block-device callbacks over the SAME RAM window storage.c uses. */
+static int h2_read(const struct lfs_config *c, lfs_block_t b, lfs_off_t o, void *buf,
+                   lfs_size_t sz) {
+    (void)c;
+    memcpy(buf, flash_ptr(STORAGE_FLASH_OFFSET + b * FLASH_SECTOR_SIZE + o), sz);
+    return 0;
+}
+static int h2_prog(const struct lfs_config *c, lfs_block_t b, lfs_off_t o, const void *buf,
+                   lfs_size_t sz) {
+    (void)c;
+    flash_range_program(STORAGE_FLASH_OFFSET + b * FLASH_SECTOR_SIZE + o, buf, sz);
+    return 0;
+}
+static int h2_erase(const struct lfs_config *c, lfs_block_t b) {
+    (void)c;
+    flash_range_erase(STORAGE_FLASH_OFFSET + b * FLASH_SECTOR_SIZE, FLASH_SECTOR_SIZE);
+    return 0;
+}
+static int h2_sync(const struct lfs_config *c) {
+    (void)c;
+    return 0;
+}
+
+/* Format the window and write ONE legacy plaintext record at /keys/<id>. */
+static void plant_legacy_key(const legacy_stored_t *rec) {
+    static uint8_t    rbuf[256], pbuf[256], lbuf[8], fbuf[256];
+    struct lfs_config cfg = {
+        .read             = h2_read,
+        .prog             = h2_prog,
+        .erase            = h2_erase,
+        .sync             = h2_sync,
+        .read_size        = 256,
+        .prog_size        = 256,
+        .block_size       = FLASH_SECTOR_SIZE,
+        .block_count      = STORAGE_SIZE_BYTES / FLASH_SECTOR_SIZE,
+        .cache_size       = 256,
+        .lookahead_size   = sizeof(lbuf),
+        .block_cycles     = 500,
+        .read_buffer      = rbuf,
+        .prog_buffer      = pbuf,
+        .lookahead_buffer = lbuf,
+    };
+    const struct lfs_file_config fcfg = {.buffer = fbuf};
+
+    lfs_t l;
+    assert(lfs_format(&l, &cfg) == 0);
+    assert(lfs_mount(&l, &cfg) == 0);
+    assert(lfs_mkdir(&l, "/keys") == 0);
+    char path[40];
+    snprintf(path, sizeof path, "/keys/%05u", rec->id);
+    lfs_file_t f;
+    assert(lfs_file_opencfg(&l, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC, &fcfg) == 0);
+    assert(lfs_file_write(&l, &f, rec, sizeof(*rec)) == (lfs_ssize_t)sizeof(*rec));
+    assert(lfs_file_close(&l, &f) == 0);
+    assert(lfs_unmount(&l) == 0);
 }
 
 /* Scan the whole storage window for `pat` — used to prove a secret is NOT
@@ -408,7 +516,11 @@ int main(void) {
         key_record_t vk = make_key(42, "victim", true, false, 1700111111u, 0);
         memcpy(vk.secret, del_seed, sizeof del_seed);
         assert(storage_key_save(&vk) == true);
-        assert(window_contains(del_seed, sizeof del_seed) == true); /* seed on flash */
+        /* H7 encrypts secrets at rest, so the plaintext seed never lands on
+         * flash; the (encrypted) record still exists and must be scrubbed on
+         * delete — that scrub is what this test verifies. */
+        assert(window_contains(del_seed, sizeof del_seed) == false);
+        assert(storage_key_exists(42) == true);
 
         g_del_max_zero_run = 0;
         g_delete_active    = 1;
@@ -420,6 +532,114 @@ int main(void) {
         /* the current filesystem value is gone (remove committed) */
         assert(storage_key_exists(42) == false);
         assert(storage_key_get(42, &tmp) == false);
+    }
+
+    /* --- H7: secrets are encrypted at rest -------------------------------- */
+    /* A saved key's seed must NOT appear in cleartext anywhere in the window,
+     * yet must decrypt back exactly on this device. Use a distinctive seed
+     * pattern so the window scan can't collide with unrelated bytes. */
+    {
+        uint8_t distinct[KEY_SECRET_LEN];
+        for (int i = 0; i < KEY_SECRET_LEN; i++)
+            distinct[i] = (uint8_t)(0xC0 ^ (i * 7 + 3));
+        assert(window_contains(distinct, sizeof distinct) == false); /* not there yet */
+
+        key_record_t ek = make_key(11, "enc", true, true, 1700009999u, 0);
+        memcpy(ek.secret, distinct, sizeof distinct);
+        assert(storage_key_save(&ek) == true);
+
+        /* confidentiality: plaintext seed is nowhere in flash */
+        assert(window_contains(distinct, sizeof distinct) == false);
+
+        /* round-trip: same device decrypts to the exact seed, tag verifies */
+        key_record_t eg;
+        assert(storage_key_get(11, &eg) == true);
+        assert(eg.is_checksum_valid == true);
+        assert(memcmp(eg.secret, distinct, sizeof distinct) == 0);
+        assert(keys_equal(&ek, &eg));
+
+        /* wifi password likewise never lands in cleartext, round-trips */
+        wifi_config_t ewc = {0};
+        snprintf(ewc.ssid, sizeof ewc.ssid, "net");
+        snprintf(ewc.password, sizeof ewc.password, "PLAINTEXT-WIFI-PW-MARKER-XYZ");
+        assert(storage_wifi_set(&ewc) == true);
+        assert(window_contains((const uint8_t *)"PLAINTEXT-WIFI-PW-MARKER-XYZ", 28) == false);
+        wifi_config_t ewg = {0};
+        assert(storage_wifi_get(&ewg) == true);
+        assert(strcmp(ewg.password, ewc.password) == 0);
+        assert(strcmp(ewg.ssid, ewc.ssid) == 0);
+        assert(storage_wifi_clear() == true);
+
+        /* --- device binding: a rotated/foreign KEK must NOT decrypt -------- */
+        g_board_id[0] ^= 0xFF; /* pretend this is a different board */
+        key_record_t wrong;
+        assert(storage_key_get(11, &wrong) == true); /* record still present */
+        assert(wrong.is_checksum_valid == false);    /* tag fails under wrong KEK */
+        uint8_t zero[KEY_SECRET_LEN] = {0};
+        assert(memcmp(wrong.secret, zero, sizeof zero) == 0); /* seed not surfaced */
+        g_board_id[0] ^= 0xFF;                                /* restore true device */
+        assert(storage_key_get(11, &eg) == true);
+        assert(eg.is_checksum_valid == true); /* decrypts again */
+        assert(memcmp(eg.secret, distinct, sizeof distinct) == 0);
+
+        assert(storage_key_delete(11) == true);
+    }
+
+    /* --- H7: legacy plaintext record migrates safely ---------------------- */
+    /* A device flashed before H7 holds plaintext key_record_stored_t records.
+     * storage.c must still read them (decrypt-or-passthrough), and re-encrypt
+     * them on the next save. Plant one via an independent lfs mount, then let
+     * storage.c mount the same media. */
+    {
+        flash_ram_map(); /* fresh window; storage re-mounts below */
+        legacy_stored_t leg = {0};
+        leg.id              = 7;
+        leg.is_enabled      = 1;
+        leg.is_admin        = 1;
+        leg.created_at      = 1699999999u;
+        snprintf(leg.name, sizeof leg.name, "legacy");
+        for (int i = 0; i < KEY_SECRET_LEN; i++)
+            leg.secret[i] = (uint8_t)(0x5A + i);
+        leg.checksum = legacy_checksum(&leg);
+        plant_legacy_key(&leg);
+
+        assert(storage_init() == true); /* mounts the planted filesystem */
+
+        /* passthrough: legacy record reads back with its plaintext seed */
+        key_record_t lg;
+        assert(storage_key_get(7, &lg) == true);
+        assert(lg.is_checksum_valid == true);
+        assert(lg.is_admin == true && lg.is_enabled == true);
+        assert(strcmp(lg.name, "legacy") == 0);
+        for (int i = 0; i < KEY_SECRET_LEN; i++)
+            assert(lg.secret[i] == (uint8_t)(0x5A + i));
+
+        /* the on-flash legacy record IS plaintext (that is the risk H7 closes),
+         * and being plaintext it decrypts independent of the KEK — flip the
+         * board id and it STILL reads (no crypto binds it). */
+        assert(window_contains(leg.secret, KEY_SECRET_LEN) == true);
+        g_board_id[0] ^= 0xFF;
+        key_record_t lg_wrongdev;
+        assert(storage_key_get(7, &lg_wrongdev) == true);
+        assert(lg_wrongdev.is_checksum_valid == true); /* CRC, not KEK-bound */
+        g_board_id[0] ^= 0xFF;
+
+        /* migrate: re-save upgrades it to the encrypted format. (The stale
+         * plaintext copy may linger in flash until a block is reused/formatted
+         * — that residue is M13's concern, not H7's; do not assert it gone.) */
+        assert(storage_key_save(&lg) == true);
+        key_record_t mg;
+        assert(storage_key_get(7, &mg) == true);
+        assert(mg.is_checksum_valid == true);
+        assert(keys_equal(&lg, &mg));
+
+        /* proof of upgrade: the record is NOW KEK-bound, so a foreign device
+         * can no longer decrypt it (a still-plaintext record would have). */
+        g_board_id[0] ^= 0xFF;
+        key_record_t mg_wrongdev;
+        assert(storage_key_get(7, &mg_wrongdev) == true);
+        assert(mg_wrongdev.is_checksum_valid == false); /* encrypted now */
+        g_board_id[0] ^= 0xFF;
     }
 
     printf("storage OK\n");
