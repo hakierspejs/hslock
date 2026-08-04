@@ -191,25 +191,23 @@ bool backup_import(const uint8_t *buf, size_t size) {
         return false;
     }
 
-    // Checksum valid - delete existing keys
-    static key_record_t existing[BACKUP_MAX_KEYS];
-    int                 existing_count = storage_key_list(existing, BACKUP_MAX_KEYS);
-    for (int i = 0; i < existing_count; i++) {
-        storage_key_delete(existing[i].id);
-    }
-    // Only the ids were needed; scrub the resident seeds from BSS.
-    secure_wipe(existing, sizeof(existing));
-
-    // Write new keys
+    // M6: convert every record (canonicalising the untrusted flag bytes) and
+    // replace the whole key set atomically: the new records are staged first and
+    // the old keys are removed only once every new write has succeeded. A failure
+    // or power loss mid-import can therefore never leave storage empty or
+    // partially wiped - the device keeps its ORIGINAL key set until the complete
+    // new set is durable.
+    static key_record_t incoming[BACKUP_MAX_KEYS];
     for (uint32_t i = 0; i < hdr->key_count; i++) {
-        key_record_t rec;
-        to_key_record(&keys[i], &rec);
-        bool ok = storage_key_save(&rec);
-        secure_wipe(&rec, sizeof(rec));
-        if (!ok) {
-            printf("[backup] import: failed to write key %u\r\n", keys[i].id);
-            return false;
-        }
+        to_key_record(&keys[i], &incoming[i]);
+    }
+
+    bool replaced = storage_key_replace_all(incoming, (int)hdr->key_count);
+    // incoming[] holds every imported seed; scrub it from BSS regardless of outcome.
+    secure_wipe(incoming, sizeof(incoming));
+    if (!replaced) {
+        printf("[backup] import: atomic replace failed, keys unchanged\r\n");
+        return false;
     }
 
     printf("[backup] import: wrote %u keys\r\n", hdr->key_count);
