@@ -1,5 +1,6 @@
 #include "commands_handlers.h"
 #include "commands.h"
+#include "login_throttle.h"
 #include "hardware/buzzer.h"
 #include "hardware/clock.h"
 #include "hardware/latch.h"
@@ -64,11 +65,13 @@ void cmd_status(int argc, char **argv) {
         printf("ntp:       not synced\r\n");
     }
 
-    // Keys (admin only: key inventory is target-selection data)
+    // Keys (admin only: key inventory is target-selection data). Declared at
+    // function scope so the scrub below always runs, even on the non-admin path
+    // where the array stays zero-initialised.
+    static key_record_t keys[BACKUP_MAX_KEYS];
     if (commands_is_admin()) {
-        static key_record_t keys[BACKUP_MAX_KEYS];
-        int                 count   = storage_key_list(keys, BACKUP_MAX_KEYS);
-        int                 enabled = 0, corrupt = 0;
+        int count   = storage_key_list(keys, BACKUP_MAX_KEYS);
+        int enabled = 0, corrupt = 0;
         for (int i = 0; i < count; i++) {
             if (!keys[i].is_checksum_valid)
                 corrupt++;
@@ -124,7 +127,24 @@ void cmd_test(int argc, char **argv) {
     buzzer_play_command_ack();
 }
 
+// Brute-force cooldown state for the serial login path (M7). RAM-only: reset on
+// reboot, which is acceptable for M7 (persisting overlaps H1's ignored work).
+static login_throttle_t login_throttle;
+
 void cmd_login(int argc, char **argv) {
+    // Brute-force throttle: once too many consecutive failures have accrued,
+    // refuse further attempts for the escalating cooldown window WITHOUT doing
+    // the key lookup / TOTP work, so an attacker can no longer trade the
+    // buzzer's ~1.2 s blocking beep for ~48 guesses/min.
+    uint64_t now_us = time_us_64();
+    uint64_t remaining_us;
+    if (login_throttle_blocked(&login_throttle, now_us, &remaining_us)) {
+        uint32_t remaining_s = (uint32_t)(remaining_us / 1000000ULL) + 1;
+        printf("error: too many failed attempts, locked for %us\r\n", remaining_s);
+        buzzer_play_auth_error();
+        return;
+    }
+
     uint16_t id   = (uint16_t)strtoul(argv[1], NULL, 10);
     uint32_t code = (uint32_t)strtoul(argv[2], NULL, 10);
 
@@ -192,6 +212,7 @@ void cmd_login(int argc, char **argv) {
     // Load requested key
     key_record_t key;
     if (!storage_key_get(id, &key)) {
+        login_throttle_record_failure(&login_throttle, now_us);
         printf("error: invalid credentials\r\n");
         secure_wipe(&key, sizeof(key));
         buzzer_play_auth_error();
@@ -199,6 +220,7 @@ void cmd_login(int argc, char **argv) {
     }
 
     if (!key.is_enabled || !key.is_admin || !key.is_checksum_valid) {
+        login_throttle_record_failure(&login_throttle, now_us);
         printf("error: invalid credentials\r\n");
         secure_wipe(&key, sizeof(key));
         buzzer_play_auth_error();
@@ -207,12 +229,14 @@ void cmd_login(int argc, char **argv) {
 
     // Verify TOTP
     if (!totp_verify(key.secret, KEY_SECRET_LEN, code)) {
+        login_throttle_record_failure(&login_throttle, now_us);
         printf("error: invalid credentials\r\n");
         secure_wipe(&key, sizeof(key));
         buzzer_play_auth_error();
         return;
     }
 
+    login_throttle_reset(&login_throttle);
     admin_mode = true;
     printf("login: admin mode enabled\r\n");
     secure_wipe(&key, sizeof(key));
