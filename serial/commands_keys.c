@@ -193,7 +193,7 @@ void cmd_add_key(int argc, char **argv) {
     clock_get_unix_time(&created_at);
     key.created_at = created_at;
     strncpy(key.name, argv[2], KEY_NAME_MAX - 1);
-    generate_secret(key.secret);
+    generate_secret(key.secret, KEY_SECRET_LEN);
 
     if (storage_key_save(&key)) {
         printf("key %u '%s' added\r\n", id, key.name);

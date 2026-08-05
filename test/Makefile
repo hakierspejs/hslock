@@ -41,9 +41,15 @@ INCLUDES  := -Istub -I$(ROOT) \
              -I$(QRCODEGEN) -I$(ROOT)/libs/littlefs
 
 # Per-harness source lists (harness + its real dependencies).
-SECRET_QR_SRCS := harness_secret_qr.c $(SHARED)/random.c $(BASE32)/base32.c \
-                  $(QRCODEGEN)/qrcodegen.c
-BASE64_SRCS    := harness_base64.c $(BASE64)/base64.c
+# secret_qr now links the REAL mbedtls HMAC-DRBG (shared/random.c conditions its
+# entropy through it, per M8), like the TOTP harness: -idirafter keeps the
+# stub/pico headers reachable while the real <mbedtls/hmac_drbg.h> (a system
+# dir) wins over stub/mbedtls for random.c. CI apt-installs libmbedtls-dev.
+SECRET_QR_SRCS     := harness_secret_qr.c $(SHARED)/random.c $(BASE32)/base32.c \
+                      $(QRCODEGEN)/qrcodegen.c
+SECRET_QR_INCLUDES := -I$(ROOT) -I$(SHARED) -I$(BASE32) -I$(QRCODEGEN) -idirafter stub
+SECRET_QR_LIBS     := -lmbedcrypto
+BASE64_SRCS        := harness_base64.c $(BASE64)/base64.c
 
 # TOTP harness needs the REAL HMAC-SHA1, so it builds against the system mbedtls
 # (libmbedtls-dev) rather than the compile-only stub/mbedtls/md.h. `-idirafter
@@ -134,7 +140,7 @@ asan: check-submodules $(BUILD)/asan_secret_qr $(BUILD)/asan_base64 $(BUILD)/asa
 	@echo "== asan OK =="
 
 $(BUILD)/asan_secret_qr: $(SECRET_QR_SRCS) | $(BUILD)
-	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(INCLUDES) $(SECRET_QR_SRCS) -o $@
+	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(SECRET_QR_INCLUDES) $(SECRET_QR_SRCS) $(SECRET_QR_LIBS) -o $@
 
 $(BUILD)/asan_base64: $(BASE64_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(ASAN_FLAGS) $(INCLUDES) $(BASE64_SRCS) -o $@
@@ -160,7 +166,7 @@ valgrind: check-submodules $(BUILD)/vg_secret_qr $(BUILD)/vg_base64 $(BUILD)/vg_
 	@echo "== valgrind OK =="
 
 $(BUILD)/vg_secret_qr: $(SECRET_QR_SRCS) | $(BUILD)
-	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(INCLUDES) $(SECRET_QR_SRCS) -o $@
+	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(SECRET_QR_INCLUDES) $(SECRET_QR_SRCS) $(SECRET_QR_LIBS) -o $@
 
 $(BUILD)/vg_base64: $(BASE64_SRCS) | $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(VG_FLAGS) $(INCLUDES) $(BASE64_SRCS) -o $@
@@ -185,7 +191,7 @@ $(BUILD)/vg_commands: $(COMMANDS_SRCS) | $(BUILD)
 # is filtered out.
 coverage: check-submodules | $(COV_DIR)/obj
 	@echo "== coverage: building + running harnesses =="
-	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(INCLUDES) $(SECRET_QR_SRCS) \
+	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(SECRET_QR_INCLUDES) $(SECRET_QR_SRCS) $(SECRET_QR_LIBS) \
 	    -o $(COV_DIR)/obj/cov_secret_qr
 	$(CC) $(CSTD) $(WARN) $(COV_FLAGS) $(INCLUDES) $(BASE64_SRCS) \
 	    -o $(COV_DIR)/obj/cov_base64
