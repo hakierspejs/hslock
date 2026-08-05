@@ -33,6 +33,25 @@ echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="2e8a", MODE="0666"' | sudo tee /etc/ud
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
+## Build via Docker
+
+If you don't want to install the toolchain/SDK on your host, use the provided
+`Dockerfile` instead - it only contains the toolchain and Pico SDK; your
+working tree is bind-mounted in and built in place.
+
+```bash
+git submodule update --init --recursive   # still required on the host
+docker build -t hslock-build .
+docker run --rm -v "$(pwd)":/src --user "$(id -u):$(id -g)" hslock-build
+```
+
+`hslock.uf2` appears in the repo root, same as a native `./build.sh` run.
+`--user "$(id -u):$(id -g)"` keeps `build/` and `hslock.uf2` owned by you
+instead of root. Pass extra `build.sh` flags after the image name, e.g.
+`docker run --rm -v "$(pwd)":/src --user "$(id -u):$(id -g)" hslock-build
+--clean`. `--flash`/`--erase` won't work in a container - they need direct
+USB access to the device.
+
 ## Clone
 
 ```bash
