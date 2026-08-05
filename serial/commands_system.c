@@ -10,6 +10,7 @@
 #include "network/ntp.h"
 #include "storage/backup.h"
 #include "storage/storage.h"
+#include "shared/door_verify.h"
 #include "shared/totp.h"
 #include "shared/wipe.h"
 #include "version.h"
@@ -253,6 +254,10 @@ void cmd_format_storage(int argc, char **argv) {
     absolute_time_t deadline    = make_timeout_time_ms(15000);
 
     while (!time_reached(deadline) && len < 7) {
+        // Core 0 is the only servicer of keypad door-verify requests; pump it
+        // each iteration so the confirm wait never starves the keypad (L9).
+        core0_handle_door_verify();
+
         int c = getchar_timeout_us(0);
         if (c == PICO_ERROR_TIMEOUT) {
             sleep_ms(10);

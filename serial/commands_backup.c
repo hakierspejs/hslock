@@ -3,6 +3,7 @@
 #include "storage/backup.h"
 #include "shared/wipe.h"
 #include "libs/base64/base64.h"
+#include "shared/door_verify.h"
 #include "pico/stdlib.h"
 #include "pico/time.h"
 #include <stdio.h>
@@ -83,6 +84,10 @@ void cmd_import_keys(int argc, char **argv) {
     absolute_time_t deadline = make_timeout_time_ms(60000); // 60s to paste
 
     while (!time_reached(deadline)) {
+        // Core 0 is the only servicer of keypad door-verify requests; pump it
+        // each iteration so a long paste never starves the keypad (L9).
+        core0_handle_door_verify();
+
         int c = getchar_timeout_us(10000);
         if (c == PICO_ERROR_TIMEOUT)
             continue;
