@@ -20,19 +20,19 @@
 #endif
 #define MEM_ALIGNMENT 4
 #ifndef MEM_SIZE
-#define MEM_SIZE 4000
+// UDP/DNS/DHCP-only footprint (no TCP): covers DHCP DISCOVER/REQUEST, DNS
+// queries and outgoing NTP datagrams with headroom. RX uses PBUF_POOL_SIZE.
+#define MEM_SIZE 2048
 #endif
-#define MEMP_NUM_TCP_SEG           32
 #define MEMP_NUM_ARP_QUEUE         10
 #define PBUF_POOL_SIZE             24
 #define LWIP_ARP                   1
 #define LWIP_ETHERNET              1
-#define LWIP_ICMP                  1
-#define LWIP_RAW                   1
-#define TCP_WND                    (8 * TCP_MSS)
-#define TCP_MSS                    1460
-#define TCP_SND_BUF                (8 * TCP_MSS)
-#define TCP_SND_QUEUELEN           ((4 * (TCP_SND_BUF) + (TCP_MSS - 1)) / (TCP_MSS))
+// Firmware speaks only UDP/DNS/DHCP; disable unused stacks and the ICMP echo
+// responder to shrink the remote attack surface (no TCP input path, no raw
+// sockets, no ping-based LAN fingerprinting).
+#define LWIP_ICMP                  0
+#define LWIP_RAW                   0
 #define LWIP_NETIF_STATUS_CALLBACK 1
 #define LWIP_NETIF_LINK_CALLBACK   1
 #define LWIP_NETIF_HOSTNAME        1
@@ -45,11 +45,9 @@
 #define LWIP_CHKSUM_ALGORITHM      3
 #define LWIP_DHCP                  1
 #define LWIP_IPV4                  1
-#define LWIP_TCP                   1
+#define LWIP_TCP                   0
 #define LWIP_UDP                   1
 #define LWIP_DNS                   1
-#define LWIP_TCP_KEEPALIVE         1
-
 /*
  * M9: seed lwIP's PRNG from the RP2040 hardware RNG. Without LWIP_RAND, lwIP
  * falls back to ((u32_t)rand()) and nothing calls srand(), so the DNS
@@ -60,8 +58,10 @@
 #include "pico/rand.h"
 #define LWIP_RAND()               ((u32_t)get_rand_32())
 #define LWIP_NETIF_TX_SINGLE_PBUF 1
-#define DHCP_DOES_ARP_CHECK       0
-#define LWIP_DHCP_DOES_ACD_CHECK  0
+// Restore lwIP's address-conflict detection so a LAN attacker cannot silently
+// force a duplicate-IP condition on the lock (feeds H4).
+#define DHCP_DOES_ARP_CHECK       1
+#define LWIP_DHCP_DOES_ACD_CHECK  1
 
 #ifndef NDEBUG
 #define LWIP_DEBUG         1
