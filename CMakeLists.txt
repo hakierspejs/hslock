@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 
+set(PICO_BOARD pico_w)
+
 include(pico_sdk_import.cmake)
 
 project(hslock_project C CXX ASM)
@@ -128,6 +130,6 @@ target_link_libraries(hslock
 )
 
 pico_enable_stdio_usb(hslock 1)
-pico_enable_stdio_uart(hslock 0)
+pico_enable_stdio_uart(hslock 1)
 
 pico_add_extra_outputs(hslock)

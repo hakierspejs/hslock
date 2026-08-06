@@ -49,7 +49,11 @@ void console_init(void) {
 }
 
 void console_task(void) {
+    #ifdef LIB_PICO_STDIO_UART
+    bool connected = true;
+    #elifdef LIB_PICO_STDIO_USB
     bool connected = stdio_usb_connected();
+    #endif
 
     // USB just connected
     if (connected && !was_connected) {
