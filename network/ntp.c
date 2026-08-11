@@ -123,13 +123,14 @@ static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip
                         u16_t port) {
     // Drop datagrams that arrive outside a waiting window (M14): a response for
     // a request we are no longer waiting on must not touch the state machine.
-  
+    //---------------------------------------------------------------------------
     // M11: a rejected datagram is DROPPED, not treated as a sync failure. Every
     // validation arm below frees its pbuf and returns without touching ntp_state,
     // so ntp_sync()'s poll loop keeps waiting for the genuine reply until its
     // deadline. A single spoofed packet from server_addr:123 can no longer abort
     // the whole sync. Only the success path advances the state machine.
-  
+    //---------------------------------------------------------------------------
+    
     if (p->tot_len < 48 || ntp_state != NTP_STATE_WAITING) { // use tot_len not len (L10 fix too)
         printf("[ntp] response error\r\n");
         pbuf_free(p);
