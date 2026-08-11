@@ -52,7 +52,7 @@ static void boot_network(void) {
     printf("[main] NTP sync ok\r\n");
 }
 
-static void core0_handle_door_verify(void) {
+void core0_handle_door_verify(void) {
     static uint32_t last_handled_seq = 0;
 
     uint32_t seq = door_verify_mailbox.request_seq;

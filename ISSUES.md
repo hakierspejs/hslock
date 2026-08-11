@@ -904,3 +904,4 @@ The ARM toolchain, Pico SDK (`PICO_SDK_PATH` is unset) and host test dependencie
 here, so nothing was executed: no firmware build, no `make -C test asan`/`valgrind`/
 `coverage`, no fuzzing. Every finding comes from reading the code. The **[verify-on-hw]**
 items (C1, H7, M8) depend on SDK or silicon behaviour that should be confirmed on a device.
+ 

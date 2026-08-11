@@ -1,3 +1,4 @@
+#include "commands.h"
 #include "commands_handlers.h"
 #include "commands.h"
 #include "hardware/buzzer.h"
@@ -10,6 +11,7 @@
 #include "network/ntp.h"
 #include "storage/backup.h"
 #include "storage/storage.h"
+#include "shared/door_verify.h"
 #include "shared/totp.h"
 #include "shared/wipe.h"
 #include "version.h"
@@ -78,10 +80,9 @@ void cmd_status(int argc, char **argv) {
                 enabled++;
         }
         printf("keys:      %d total, %d enabled, %d corrupt\r\n", count, enabled, corrupt);
+        // Scrub the resident key database (seeds included) from BSS.
+        secure_wipe(keys, sizeof(keys));
     }
-
-    // Scrub the resident key database (seeds included) from BSS.
-    secure_wipe(keys, sizeof(keys));
 
     buzzer_play_command_ack();
 }
@@ -156,7 +157,7 @@ void cmd_login(int argc, char **argv) {
     wifi_config_t wifi;
     if (storage_is_mounted() && !storage_wifi_get(&wifi)) {
         printf("warning: wifi not configured - open mode\r\n");
-        admin_mode = true;
+        commands_admin_grant();
         printf("login: admin mode enabled\r\n");
         buzzer_play_command_ack();
         return;
@@ -170,7 +171,7 @@ void cmd_login(int argc, char **argv) {
     if (!clock_get_unix_time(&now_unix)) {
         if (time_us_64() >= BOOT_BYPASS_WINDOW_US) {
             printf("warning: RTC not set - open mode\r\n");
-            admin_mode = true;
+            commands_admin_grant();
             printf("login: admin mode enabled\r\n");
             buzzer_play_command_ack();
         } else {
@@ -185,7 +186,7 @@ void cmd_login(int argc, char **argv) {
     // No admin keys - allow any credentials (bootstrap mode)
     if (!any_admin) {
         printf("warning: no admin keys configured - bootstrap mode\r\n");
-        admin_mode = true;
+        commands_admin_grant();
         printf("login: admin mode enabled\r\n");
         buzzer_play_command_ack();
         return;
@@ -215,7 +216,7 @@ void cmd_login(int argc, char **argv) {
         return;
     }
 
-    admin_mode = true;
+    commands_admin_grant();
     printf("login: admin mode enabled\r\n");
     secure_wipe(&key, sizeof(key));
     buzzer_play_command_ack();
@@ -254,6 +255,10 @@ void cmd_format_storage(int argc, char **argv) {
     absolute_time_t deadline    = make_timeout_time_ms(15000);
 
     while (!time_reached(deadline) && len < 7) {
+        // Core 0 is the only servicer of keypad door-verify requests; pump it
+        // each iteration so the confirm wait never starves the keypad (L9).
+        core0_handle_door_verify();
+
         int c = getchar_timeout_us(0);
         if (c == PICO_ERROR_TIMEOUT) {
             sleep_ms(10);

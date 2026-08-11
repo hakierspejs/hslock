@@ -7,7 +7,8 @@
 #include <stdint.h>
 
 typedef enum {
-    MBEDTLS_MD_SHA1 = 4,
+    MBEDTLS_MD_SHA1   = 4,
+    MBEDTLS_MD_SHA256 = 6,
 } mbedtls_md_type_t;
 
 typedef struct mbedtls_md_info_t mbedtls_md_info_t;

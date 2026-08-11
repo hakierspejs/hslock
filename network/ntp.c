@@ -123,15 +123,16 @@ static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip
                         u16_t port) {
     // Drop datagrams that arrive outside a waiting window (M14): a response for
     // a request we are no longer waiting on must not touch the state machine.
-    if (ntp_state != NTP_STATE_WAITING) {
+  
+    // M11: a rejected datagram is DROPPED, not treated as a sync failure. Every
+    // validation arm below frees its pbuf and returns without touching ntp_state,
+    // so ntp_sync()'s poll loop keeps waiting for the genuine reply until its
+    // deadline. A single spoofed packet from server_addr:123 can no longer abort
+    // the whole sync. Only the success path advances the state machine.
+  
+    if (p->tot_len < 48 || ntp_state != NTP_STATE_WAITING) { // use tot_len not len (L10 fix too)
+        printf("[ntp] response error\r\n");
         pbuf_free(p);
-        return;
-    }
-
-    if (p->tot_len < 48) { // use tot_len not len (L10 fix too)
-        printf("[ntp] response too short\r\n");
-        pbuf_free(p);
-        ntp_state = NTP_STATE_FAILED;
         return;
     }
 
@@ -142,7 +143,6 @@ static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip
     // Validate source (belt-and-suspenders — udp_connect already filters)
     if (!ip_addr_cmp(addr, &server_addr) || port != NTP_PORT) {
         printf("[ntp] unexpected source\r\n");
-        ntp_state = NTP_STATE_FAILED;
         return;
     }
 
@@ -153,24 +153,20 @@ static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip
 
     if (li == 3) { // LI=3: clock unsynchronised
         printf("[ntp] server clock unsynchronised\r\n");
-        ntp_state = NTP_STATE_FAILED;
         return;
     }
     if (mode != 4) { // mode must be 4 (server)
         printf("[ntp] unexpected mode: %u\r\n", mode);
-        ntp_state = NTP_STATE_FAILED;
         return;
     }
     if (stratum == 0 || stratum > 15) { // 0=kiss-o-death, >15=invalid
         printf("[ntp] invalid stratum: %u\r\n", stratum);
-        ntp_state = NTP_STATE_FAILED;
         return;
     }
 
     // Verify origin timestamp (bytes 24-31) echoes our nonce
     if (memcmp(&buf[24], ntp_nonce, 8) != 0) {
         printf("[ntp] origin timestamp mismatch — possible replay\r\n");
-        ntp_state = NTP_STATE_FAILED;
         return;
     }
 
@@ -193,12 +189,10 @@ static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip
     // seconds_since_1900 (H3) before either reaches the RTC.
     if (unix_time < BUILD_UNIX_TIME || unix_time - BUILD_UNIX_TIME > NTP_SANE_MAX_AGE_S) {
         printf("[ntp] timestamp outside sane band: %u\r\n", unix_time);
-        ntp_state = NTP_STATE_FAILED;
         return;
     }
 
     if (!rollback_check(unix_time)) {
-        ntp_state = NTP_STATE_FAILED;
         return;
     }
 

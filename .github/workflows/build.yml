@@ -1,0 +1,47 @@
+name: build
+
+# Cross-compiles the real firmware (not the host test suite in test.yml) to
+# catch build breaks on every push/PR. Also callable from release.yml, which
+# publishes the resulting hslock.uf2 as a GitHub Release - but only when
+# manually triggered, not automatically from this workflow.
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+env:
+  # Keep in sync with the ARG PICO_SDK_TAG default in ./Dockerfile.
+  PICO_SDK_TAG: 2.1.1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - run: sudo apt-get update && sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib build-essential
+
+      - name: Cache Pico SDK
+        id: pico-sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/pico-sdk
+          key: pico-sdk-${{ env.PICO_SDK_TAG }}
+
+      - name: Fetch Pico SDK
+        if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone -b "$PICO_SDK_TAG" --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
+          git -C ~/pico-sdk submodule update --init --recursive --depth 1
+
+      - name: Build firmware
+        env:
+          PICO_SDK_PATH: /home/runner/pico-sdk
+        run: ./build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hslock-uf2-${{ github.sha }}
+          path: hslock.uf2

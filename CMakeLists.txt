@@ -1,10 +1,19 @@
 cmake_minimum_required(VERSION 3.13)
 
+set(PICO_BOARD pico_w)
+
 include(pico_sdk_import.cmake)
 
 project(hslock_project C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
+
+# Default shipped builds to Release so NDEBUG is defined. This compiles out the
+# lwIP debug/stats machinery guarded by `#ifndef NDEBUG` in lwipopts.h, so no
+# network-state introspection ships in release firmware.
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
 
 set(MBEDTLS_CONFIG_FILE "mbedtls_config.h")
 
@@ -121,6 +130,11 @@ target_link_libraries(hslock
 )
 
 pico_enable_stdio_usb(hslock 1)
-pico_enable_stdio_uart(hslock 0)
+pico_enable_stdio_uart(hslock 1)
+
+target_compile_definitions(hslock PRIVATE
+    PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=0
+    PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=0
+)
 
 pico_add_extra_outputs(hslock)

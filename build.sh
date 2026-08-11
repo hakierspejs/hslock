@@ -31,7 +31,7 @@ fi
 
 mkdir -p build
 cd build
-cmake -DPICO_BOARD=pico_w ..
+cmake ..
 make -j"$(nproc)"
 cd ..
 

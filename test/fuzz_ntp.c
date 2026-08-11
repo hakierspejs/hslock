@@ -149,6 +149,11 @@ bool wifi_is_connected(void) {
 
 /* --- helpers -------------------------------------------------------------- */
 
+/* A valid, deterministic source address (127.0.0.1). ntp_recv_cb's source check
+ * dereferences addr and compares it against server_addr, so the harness must feed
+ * a non-NULL addr that matches; reset_ntp_state() pins server_addr to it. */
+static const ip_addr_t g_src_addr = {.addr = 0x0100007fu};
+
 /* Reset ntp.c's file-static state so each scenario starts from a known point. */
 static void reset_ntp_state(void) {
     synced                 = false;
@@ -156,6 +161,7 @@ static void reset_ntp_state(void) {
     last_sync_monotonic_us = 0;
     rollback_budget_used_s = 0;
     ntp_state              = NTP_STATE_IDLE;
+    server_addr            = g_src_addr; /* so the source check accepts feed()'s addr */
     g_applied_called       = 0;
     g_applied_unix         = 0;
 }
@@ -189,7 +195,7 @@ static void feed(const uint8_t *bytes, size_t len) {
 static void make_ntp_packet(uint8_t pkt[48], uint32_t unix_time) {
     memset(pkt, 0, 48);
     pkt[0]                      = 0x1C; /* LI=0, VN=3, Mode=4 (server) */
-    pkt[1]                      = 1;    /* stratum 1 (valid: 1..15) */
+    pkt[1]                      = 1;    /* stratum: 1..15 valid (0 and >15 rejected) */
     uint32_t seconds_since_1900 = unix_time + NTP_DELTA;
     pkt[40]                     = (uint8_t)(seconds_since_1900 >> 24);
     pkt[41]                     = (uint8_t)(seconds_since_1900 >> 16);
@@ -230,14 +236,20 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     uint8_t pkt[48];
 
-    /* Below the floor: rollback rejected, RTC untouched, state == FAILED. */
+    /* M11: a rejected datagram is DROPPED without aborting the sync. We enter the
+     * reject in the WAITING state ntp_sync's poll loop holds and require the arm
+     * to leave it WAITING (not FAILED), so the loop keeps waiting for the genuine
+     * reply until its deadline. Below the floor: rollback rejected, RTC untouched,
+     * state still WAITING. */
+    ntp_state = NTP_STATE_WAITING;
     make_ntp_packet(pkt, floor - 100u);
     feed(pkt, 48);
     assert(g_applied_called == 0);
-    assert(ntp_state == NTP_STATE_FAILED);
+    assert(ntp_state == NTP_STATE_WAITING);
 
     /* State unchanged by the reject (apply_time never ran), so the floor still
-     * holds. At/above the floor: accepted, RTC set to exactly that time. */
+     * holds. At/above the floor: accepted, RTC set to exactly that time, and only
+     * now does the state machine advance to SUCCESS. */
     make_ntp_packet(pkt, floor + 100u);
     feed(pkt, 48);
     assert(g_applied_called == 1);
