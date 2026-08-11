@@ -119,8 +119,7 @@ static void apply_time(uint32_t unix_time) {
 // NTP response callback
 // ---------------------------------------------------------------------------
 
-static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr,
-                        u16_t port) {  
+static void ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {  
     if (p->tot_len < 48 || ntp_state != NTP_STATE_WAITING) { // use tot_len not len (L10 fix too)
         printf("[ntp] response error\r\n");
         pbuf_free(p);
