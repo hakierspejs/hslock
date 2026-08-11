@@ -3,6 +3,8 @@
 #include "hardware/buzzer.h"
 #include "storage/storage.h"
 #include "pico/stdlib.h"
+#include "pico/time.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
@@ -13,13 +15,37 @@
 
 bool admin_mode = false;
 
+// Absolute time_us_64() deadline at which an idle admin session auto-expires.
+// 0 means "no active session / no deadline armed" - the expiry check treats
+// that as never-expiring so code (or a host harness) that toggles admin_mode
+// directly without a login is not spuriously logged out.
+static uint64_t admin_deadline_us = 0;
+
 bool commands_is_admin(void) {
     return admin_mode;
 }
 
+void commands_admin_grant(void) {
+    admin_mode        = true;
+    admin_deadline_us = time_us_64() + ADMIN_IDLE_TIMEOUT_US;
+}
+
+// Expire a stale admin session: if admin mode is active, a deadline is armed,
+// and it has passed, clear admin mode (auto-logout) and report true so the
+// caller can refuse. Returns false if the session is still valid or inactive.
+static bool admin_session_expired(void) {
+    if (admin_mode && admin_deadline_us != 0 && time_us_64() >= admin_deadline_us) {
+        admin_mode        = false;
+        admin_deadline_us = 0;
+        return true;
+    }
+    return false;
+}
+
 void commands_on_disconnect(void) {
     if (admin_mode) {
-        admin_mode = false;
+        admin_mode        = false;
+        admin_deadline_us = 0;
         printf("[console] USB disconnected - admin session ended\r\n");
     }
 }
@@ -123,10 +149,19 @@ void commands_dispatch(int argc, char **argv) {
 
         const command_t *cmd = &COMMANDS[i];
 
-        if (cmd->requires_admin && !admin_mode) {
-            printf("error: '%s' requires admin mode - use login <otp>\r\n", cmd->name);
-            buzzer_play_command_ack();
-            return;
+        if (cmd->requires_admin) {
+            // Drop a session that has been idle too long before honoring it, so
+            // a long-attached host cannot inherit an old login.
+            if (admin_session_expired()) {
+                printf("error: admin session expired - use login <otp>\r\n");
+                buzzer_play_command_ack();
+                return;
+            }
+            if (!admin_mode) {
+                printf("error: '%s' requires admin mode - use login <otp>\r\n", cmd->name);
+                buzzer_play_command_ack();
+                return;
+            }
         }
 
         int user_args = argc - 1;
@@ -137,6 +172,10 @@ void commands_dispatch(int argc, char **argv) {
         }
 
         HANDLERS[i](argc, argv);
+
+        // Successful admin activity refreshes the idle window.
+        if (cmd->requires_admin && admin_mode)
+            commands_admin_grant();
         return;
     }
 
