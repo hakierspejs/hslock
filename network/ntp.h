@@ -6,6 +6,7 @@
 
 #define NTP_RESYNC_INTERVAL_S (30 * 60) // 30 minutes
 #define NTP_RETRY_INTERVAL_S  5         // retry on boot failure
+#define NTP_DEGRADED_RETRY_S  30        // first-sync retry cadence in degraded mode (H4)
 #define NTP_TIMEOUT_S         15        // per-sync timeout
 
 // Max backward correction tolerated on a single accepted sync, kept well under

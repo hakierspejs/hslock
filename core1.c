@@ -19,6 +19,25 @@
 #define FIFO_VERIFY_TIMEOUT_MS 2000
 
 // ---------------------------------------------------------------------------
+// Watchdog liveness (ISSUES.md H4)
+// ---------------------------------------------------------------------------
+// The RP2040 watchdog is system-wide. Core 0 owns the actual watchdog_update();
+// core 1 only advances this counter to prove it is still alive. So if EITHER
+// core wedges - core 1 stops bumping the heartbeat, or core 0 stops checking it
+// and petting - the watchdog is no longer fed and the board resets.
+
+volatile uint32_t core1_heartbeat = 0;
+
+void watchdog_feed_core0(void) {
+    static uint32_t last_seen = 0;
+    uint32_t        hb        = core1_heartbeat;
+    if (hb != last_seen) {
+        last_seen = hb;
+        watchdog_update();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Input buffer
 // Input format: [1-3 digit key ID][6 digit TOTP code]#
 // Min length: 7 (1 digit ID + 6 digit code)
@@ -78,15 +97,15 @@ static void process_input(void) {
     // Wait for verdict, feeding watchdog while waiting
     absolute_time_t deadline = make_timeout_time_ms(FIFO_VERIFY_TIMEOUT_MS);
     while (true) {
-        watchdog_update();
+        core1_heartbeat++; // prove liveness; core 0 pets the watchdog
         if (door_verify_mailbox.response_seq == my_seq) {
             __dmb(); // seq match visible => response_granted is too
             if (door_verify_mailbox.response_granted) {
                 buzzer_play_success();
                 buzzer_play_door_open();
-                buzzer_on();
+                // latch_open() is non-blocking now (schedules its own close),
+                // so it no longer holds core 1 for the whole grant window.
                 latch_open();
-                buzzer_off();
             } else {
                 buzzer_play_fail();
             }
@@ -153,6 +172,6 @@ void main1(void) {
         }
 
         sleep_ms(5);
-        watchdog_update();
+        core1_heartbeat++; // prove liveness to core 0's watchdog feeder
     }
 }
