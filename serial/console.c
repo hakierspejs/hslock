@@ -50,12 +50,12 @@ void console_init(void) {
 
 void console_task(void) {
     bool connected;
-    
-    #ifdef LIB_PICO_STDIO_UART
+
+#ifdef LIB_PICO_STDIO_UART
     connected = true;
-    #else
-    connected = stdio_usb_connected();    // on 'LIB_PICO_STDIO_USB'
-    #endif
+#else
+    connected = stdio_usb_connected(); // on 'LIB_PICO_STDIO_USB'
+#endif
 
     // USB just connected
     if (connected && !was_connected) {
