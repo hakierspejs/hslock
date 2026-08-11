@@ -132,4 +132,9 @@ target_link_libraries(hslock
 pico_enable_stdio_usb(hslock 1)
 pico_enable_stdio_uart(hslock 1)
 
+target_compile_definitions(hslock PRIVATE
+    PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=0
+    PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=0
+)
+
 pico_add_extra_outputs(hslock)
