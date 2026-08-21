@@ -62,6 +62,13 @@ bool storage_key_get(uint16_t id, key_record_t *out);
 bool storage_key_save(const key_record_t *key); // create or update
 bool storage_key_delete(uint16_t id);
 
+// Atomically replace the ENTIRE key set with `records` (count in [0, KEY_MAX_COUNT]).
+// New records are staged to a temporary directory first; the previous keys are
+// removed only after every staged write has succeeded. A failure (or power loss)
+// mid-operation therefore leaves the store with its ORIGINAL key set intact,
+// never a wiped or partially written one. Returns false on any error.
+bool storage_key_replace_all(const key_record_t *records, int count);
+
 // List all keys. Returns count written into out[].
 int storage_key_list(key_record_t *out, int max_count);
 
